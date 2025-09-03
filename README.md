@@ -46,6 +46,7 @@ MCP for Unity acts as a bridge, allowing AI assistants (like Claude, Cursor) to 
   *   `apply_text_edits`: Precise text edits with precondition hashes and atomic multi-edit batches.
   *   `script_apply_edits`: Structured C# method/class edits (insert/replace/delete) with safer boundaries.
   *   `validate_script`: Fast validation (basic/standard) to catch syntax/structure issues before/after writes.
+  *.  `run_play_mode_tests`: Run play mode tests
 </details>
 
 ---
@@ -111,7 +112,7 @@ MCP for Unity connects your tools using two components:
 3.  Click `+` -> `Add package from git URL...`.
 4.  Enter:
     ```
-    https://github.com/CoplayDev/unity-mcp.git?path=/UnityMcpBridge
+    https://github.com/JohanHoltby/unity-mcp-MooseRunner?path=/UnityMcpBridge
     ```
 5.  Click `Add`.
 6. The MCP server is installed automatically by the package on first run or via Auto-Setup. If that fails, use Manual Configuration (below).
