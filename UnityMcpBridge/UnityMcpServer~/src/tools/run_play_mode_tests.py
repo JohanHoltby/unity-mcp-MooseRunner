@@ -84,6 +84,15 @@ def register_run_play_mode_tests_tools(mcp: FastMCP):
                         if status_response.get("success"):
                             data = status_response.get("data", {})
                             workflow_status = data.get("workflow_status", "")
+                            error_message = data.get("error_message", "")
+                            
+                            # Check for ERROR state first
+                            if workflow_status == "ERROR":
+                                return {
+                                    "success": False,
+                                    "message": f"Test execution failed: {error_message}",
+                                    "data": {"workflow_status": workflow_status, "error": error_message}
+                                }
                             
                             # Log status changes for debugging
                             if workflow_status != last_status:

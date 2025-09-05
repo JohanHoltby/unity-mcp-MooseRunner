@@ -27,10 +27,11 @@ namespace MCPForUnity.Editor.Tools
                     case "run":
                         return RunTest(@params);
                     case "status":
-                        // Return current workflow status
-                        string workflowStatus = MooseRunnerAPI.Instance.GetWorkflowStatus();
+                        // Get workflow status with error information
+                        var statusInfo = MooseRunnerAPI.Instance.GetWorkflowStatusWithError();
                         return Response.Success("Workflow status retrieved", new {
-                            workflow_status = workflowStatus,
+                            workflow_status = statusInfo.status,
+                            error_message = statusInfo.error,
                             is_playing = UnityEditor.EditorApplication.isPlaying,
                             is_compiling = UnityEditor.EditorApplication.isCompiling
                         });
