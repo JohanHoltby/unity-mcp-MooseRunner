@@ -27,18 +27,13 @@ namespace MCPForUnity.Editor.Tools
                     case "run":
                         return RunTest(@params);
                     case "status":
-                        // Getting a comprehensive list of *all* menu items dynamically is very difficult
-                        // and often requires complex reflection or maintaining a manual list.
-                        // Returning a placeholder/acknowledgement for now.
-                        Debug.LogWarning(
-                            "[ExecuteMenuItem] 'get_available_menus' action is not fully implemented. Dynamically listing all menu items is complex."
-                        );
-                        // Returning an empty list as per the refactor plan's requirements.
-                        return Response.Success(
-                            "'get_available_menus' action is not fully implemented. Returning empty list.",
-                            new List<string>()
-                        );
-                    // TODO: Consider implementing a basic list of common/known menu items or exploring reflection techniques if this feature becomes critical.
+                        // Return current workflow status
+                        string workflowStatus = MooseRunnerAPI.Instance.GetWorkflowStatus();
+                        return Response.Success("Workflow status retrieved", new {
+                            workflow_status = workflowStatus,
+                            is_playing = UnityEditor.EditorApplication.isPlaying,
+                            is_compiling = UnityEditor.EditorApplication.isCompiling
+                        });
                     default:
                         return Response.Error(
                             $"Unknown action: '{action}'. Valid actions are 'execute', 'get_available_menus'."
