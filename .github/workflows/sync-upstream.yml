@@ -1,17 +1,13 @@
-name: Sync Fork with Upstream
+name: Sync Fork (Basic)
 
 on:
   schedule:
-    - cron: '0 * * * *'
+    - cron: '0 * * * *'   # hourly (UTC)
   workflow_dispatch:
 
 jobs:
   sync:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
-      issues: write
 
     env:
       SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
@@ -24,10 +20,11 @@ jobs:
           fetch-depth: 0
           token: ${{ env.SYNC_TOKEN }}
 
-      - name: Configure git + set origin to PAT
+      - name: Configure git & auth
         run: |
-          git config user.name "github-actions[bot]"
+          git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # ensure pushes use the PAT
           git remote set-url origin https://x-access-token:${SYNC_TOKEN}@github.com/${{ github.repository }}.git
 
       - name: Add upstream and fetch
@@ -35,150 +32,14 @@ jobs:
           git remote add upstream https://github.com/CoplayDev/unity-mcp.git || true
           git fetch upstream main
 
-      - name: Debug state
-        run: |
-          echo "Current branch: $(git symbolic-ref --short HEAD || echo '<detached>')"
-          echo "Our HEAD: $(git rev-parse --short HEAD)"
-          echo "Upstream main: $(git rev-parse --short upstream/main)"
-          echo "Ahead count (us..upstream): $(git rev-list --count HEAD..upstream/main)"
-          git log --oneline --graph --decorate -n 10 || true
-
-      - name: Decide if behind
-        id: behind
-        run: |
-          AHEAD=$(git rev-list --count HEAD..upstream/main)
-          if [ "$AHEAD" -gt 0 ]; then
-            echo "behind=true" >> $GITHUB_OUTPUT
-          else
-            echo "behind=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Fast-forward (no merge commit)
-        id: ff
-        if: steps.behind.outputs.behind == 'true'
+      - name: Merge upstream/main into main (FF if possible)
         run: |
           git checkout -B main
-          if git merge --ff-only upstream/main; then
-            echo "mode=push" >> $GITHUB_OUTPUT
-          else
-            echo "mode=merge_pr" >> $GITHUB_OUTPUT
+          # try fast-forward first; if not possible, do a regular merge
+          if ! git merge --ff-only upstream/main; then
+            git merge --no-edit upstream/main
           fi
 
-      - name: Push fast-forward (PAT)
-        if: steps.ff.outputs.mode == 'push'
+      - name: Push back to fork
         run: |
           git push origin main
-          echo "Pushed FF update to origin/main"
-
-      - name: Create merge branch with upstream changes
-        id: merge_branch
-        if: steps.ff.outputs.mode == 'merge_pr'
-        run: |
-          set +e
-          git checkout -B sync/merge-upstream main
-          git merge --no-edit upstream/main
-          MERGE_STATUS=$?
-          set -e
-          if [ $MERGE_STATUS -ne 0 ]; then
-            echo "conflict=true" >> $GITHUB_OUTPUT
-            CONFLICTS=$(git diff --name-only --diff-filter=U || true)
-            printf "conflict_files<<EOF\n%s\nEOF\n" "$CONFLICTS" >> $GITHUB_OUTPUT
-            git merge --abort || true
-          else
-            echo "conflict=false" >> $GITHUB_OUTPUT
-            git push -u origin sync/merge-upstream
-          fi
-
-      # 🔁 Open or reuse a PR for the already-pushed branch
-      - name: Open/Reuse PR via API
-        if: steps.merge_branch.outputs.conflict == 'false'
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ env.SYNC_TOKEN }}
-          script: |
-            const { owner, repo } = context.repo;
-            const head = 'sync/merge-upstream';
-            const base = 'main';
-
-            // Check for existing open PR from this branch
-            const prs = await github.rest.pulls.list({
-              owner, repo, state: 'open', head: `${owner}:${head}`, base
-            });
-
-            if (prs.data.length > 0) {
-              core.info(`PR already open: #${prs.data[0].number}`);
-              return;
-            }
-
-            // Create PR
-            const { data: pr } = await github.rest.pulls.create({
-              owner, repo, head, base,
-              title: 'Sync: Merge upstream/main into main',
-              body: 'Automated sync PR merging upstream/main into main.'
-            });
-            core.info(`Created PR #${pr.number}`);
-
-      - name: Create/Update issue on conflict
-        if: steps.merge_branch.outputs.conflict == 'true'
-        uses: actions/github-script@v7
-        env:
-          CONFLICT_FILES: ${{ steps.merge_branch.outputs.conflict_files }}
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const { owner, repo } = context.repo;
-            const conflictFiles = (process.env.CONFLICT_FILES || '').trim() || '(files not listed)';
-            const title = "⚠️ Auto-sync failed: Merge conflict with upstream/main";
-            const body = `
-            The automatic sync from upstream failed due to merge conflicts.
-
-            **Upstream:** \`CoplayDev/unity-mcp\` (branch: \`main\`)
-            **Fork:** \`${owner}/${repo}\`
-            **Run:** https://github.com/${owner}/${repo}/actions/runs/${context.runId}
-
-            ### Conflicting files
-            \`\`\`
-            ${conflictFiles}
-            \`\`\`
-
-            ### Resolve locally
-            \`\`\`bash
-            git clone https://github.com/${owner}/${repo}.git
-            cd ${repo}
-            git remote add upstream https://github.com/CoplayDev/unity-mcp.git
-            git fetch upstream
-            git checkout -B sync/merge-upstream origin/main
-            git merge upstream/main
-            # resolve conflicts, then:
-            git add .
-            git commit -m "Resolve upstream merge conflicts"
-            git push -u origin sync/merge-upstream
-            \`\`\`
-            Then open a PR from \`sync/merge-upstream\` to \`main\`.
-            `.trim();
-
-            const existing = await github.rest.issues.listForRepo({
-              owner, repo, state: 'open', labels: 'auto-sync-conflict'
-            });
-            if (existing.data.length > 0) {
-              await github.rest.issues.createComment({
-                owner, repo,
-                issue_number: existing.data[0].number,
-                body: "Another sync attempt failed due to merge conflicts.\n\n" + body
-              });
-            } else {
-              await github.rest.issues.create({
-                owner, repo,
-                title,
-                body,
-                labels: ['auto-sync-conflict','needs-attention']
-              });
-            }
-
-      - name: Summary
-        if: always()
-        run: |
-          echo "## Sync status" >> $GITHUB_STEP_SUMMARY
-          echo "- Behind: ${{ steps.behind.outputs.behind }}" >> $GITHUB_STEP_SUMMARY
-          echo "- Mode (if behind): ${{ steps.ff.outputs.mode }}" >> $GITHUB_STEP_SUMMARY
-          echo "- Conflicts (if merge tried): ${{ steps.merge_branch.outputs.conflict }}" >> $GITHUB_STEP_SUMMARY
