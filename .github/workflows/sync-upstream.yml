@@ -12,6 +12,7 @@ jobs:
       contents: write
       pull-requests: write
       issues: write
+      workflows: write   # <-- needed to push commits that change .github/workflows/*.yml
 
     steps:
       - name: Checkout main
@@ -36,7 +37,7 @@ jobs:
           echo "Our HEAD: $(git rev-parse --short HEAD)"
           echo "Upstream main: $(git rev-parse --short upstream/main)"
           echo "Ahead count (us..upstream): $(git rev-list --count HEAD..upstream/main)"
-          git log --oneline --graph --decorate -n 10
+          git log --oneline --graph --decorate -n 10 || true
 
       - name: Decide if behind
         id: behind
@@ -52,7 +53,6 @@ jobs:
         id: ff
         if: steps.behind.outputs.behind == 'true'
         run: |
-          set -e
           git checkout -B main
           if git merge --ff-only upstream/main; then
             echo "mode=push" >> $GITHUB_OUTPUT
@@ -66,14 +66,12 @@ jobs:
           git push origin main
           echo "Pushed FF update to origin/main"
 
-      # Create a real branch and try a merge so there's something to PR
       - name: Create merge branch with upstream changes
         id: merge_branch
         if: steps.ff.outputs.mode == 'merge_pr'
         run: |
-          set -e
-          git checkout -B sync/merge-upstream main
           set +e
+          git checkout -B sync/merge-upstream main
           git merge --no-edit upstream/main
           MERGE_STATUS=$?
           set -e
@@ -87,24 +85,19 @@ jobs:
             git push -u origin sync/merge-upstream
           fi
 
-      - name: Open PR (merge branch)
+      - name: Open/Update PR (merge branch)
         if: steps.merge_branch.outputs.conflict == 'false'
-        uses: actions/github-script@v7
+        uses: peter-evans/create-pull-request@v6
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const { owner, repo } = context.repo;
-            const { data: pr } = await github.rest.pulls.create({
-              owner,
-              repo,
-              title: "Sync: Merge upstream/main into main",
-              head: "sync/merge-upstream",
-              base: "main",
-              body: "Automated sync PR merging upstream/main into main."
-            });
-            core.info(`Created PR #${pr.number}`);
+          branch: sync/merge-upstream
+          title: "Sync: Merge upstream/main into main"
+          body: "Automated sync PR merging upstream/main into main."
+          base: main
+          commit-message: "Sync fork with upstream"
+          delete-branch: false
+          draft: false
 
-      - name: Create issue on conflict
+      - name: Create/Update issue on conflict
         if: steps.merge_branch.outputs.conflict == 'true'
         uses: actions/github-script@v7
         env:
@@ -120,14 +113,14 @@ jobs:
 
             **Upstream:** \`CoplayDev/unity-mcp\` (branch: \`main\`)
             **Fork:** \`${owner}/${repo}\`
-            **Workflow Run:** https://github.com/${owner}/${repo}/actions/runs/${context.runId}
+            **Run:** https://github.com/${owner}/${repo}/actions/runs/${context.runId}
 
             ### Conflicting files
             \`\`\`
             ${conflictFiles}
             \`\`\`
 
-            ### How to resolve locally
+            ### Resolve locally
             \`\`\`bash
             git clone https://github.com/${owner}/${repo}.git
             cd ${repo}
@@ -143,7 +136,6 @@ jobs:
             Then open a PR from \`sync/merge-upstream\` to \`main\`.
             `.trim();
 
-            // Avoid duplicates: if an open conflict issue exists, add a comment instead
             const existing = await github.rest.issues.listForRepo({
               owner, repo, state: 'open', labels: 'auto-sync-conflict'
             });
@@ -161,3 +153,11 @@ jobs:
                 labels: ['auto-sync-conflict','needs-attention']
               });
             }
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Sync status" >> $GITHUB_STEP_SUMMARY
+          echo "- Behind: ${{ steps.behind.outputs.behind }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Mode (if behind): ${{ steps.ff.outputs.mode }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Conflicts (if merge tried): ${{ steps.merge_branch.outputs.conflict }}" >> $GITHUB_STEP_SUMMARY
