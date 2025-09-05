@@ -11,6 +11,7 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+      issues: write
 
     steps:
       - name: Checkout main
@@ -56,7 +57,7 @@ jobs:
           if git merge --ff-only upstream/main; then
             echo "mode=push" >> $GITHUB_OUTPUT
           else
-            echo "mode=pr" >> $GITHUB_OUTPUT
+            echo "mode=merge_pr" >> $GITHUB_OUTPUT
           fi
 
       - name: Push fast-forward
@@ -65,13 +66,100 @@ jobs:
           git push origin main
           echo "Pushed FF update to origin/main"
 
-      - name: Create PR (cannot FF or push blocked)
-        if: steps.ff.outputs.mode == 'pr'
-        uses: peter-evans/create-pull-request@v6
+      # Create a real branch and try a merge commit so there's something to PR
+      - name: Create merge branch with upstream changes
+        id: merge_branch
+        if: steps.ff.outputs.mode == 'merge_pr'
+        run: |
+          set -e
+          git checkout -B sync/merge-upstream main
+          set +e
+          git merge --no-edit upstream/main
+          MERGE_STATUS=$?
+          set -e
+          if [ $MERGE_STATUS -ne 0 ]; then
+            echo "conflict=true" >> $GITHUB_OUTPUT
+            # capture conflicting files
+            CONFLICTS=$(git diff --name-only --diff-filter=U || true)
+            printf "conflict_files<<EOF\n%s\nEOF\n" "$CONFLICTS" >> $GITHUB_OUTPUT
+            # abort merge to leave working tree clean for subsequent steps
+            git merge --abort || true
+          else
+            echo "conflict=false" >> $GITHUB_OUTPUT
+            git push -u origin sync/merge-upstream
+          fi
+
+      - name: Open PR (merge branch)
+        if: steps.merge_branch.outputs.conflict == 'false'
+        uses: actions/github-script@v7
         with:
-          branch: sync/upstream-main
-          title: "Sync: upstream/main → main"
-          body: "Automated sync from upstream. FF not possible (or push blocked by rules)."
-          commit-message: "Sync fork with upstream"
-          base: main
-          delete-branch: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const {data: pr} = await github.rest.pulls.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: "Sync: Merge upstream/main into main",
+              head: "sync/merge-upstream",
+              base: "main",
+              body: "Automated sync PR merging upstream/main into main."
+            });
+            core.info(`Created PR #${pr.number}`);
+
+      - name: Create issue on conflict
+        if: steps.merge_branch.outputs.conflict == 'true'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const conflicts = `\n${{ steps.merge_branch.outputs.conflict_files || '' }}\n`.trim() || '(files not listed)';
+            const title = "⚠️ Auto-sync failed: Merge conflict with upstream/main";
+            const body = `
+            The automatic sync from upstream failed due to merge conflicts.
+
+            **Upstream:** \`${{ github.repository_owner }}/unity-mcp\` (branch: \`main\`)
+            **Fork:** \`${{ context.repo.owner }}/${{ context.repo.repo }}\`
+            **Workflow Run:** https://github.com/${{ context.repo.owner }}/${{ context.repo.repo }}/actions/runs/${{ context.runId }}
+
+            ### Conflicting files
+            \`\`\`
+            ${conflicts}
+            \`\`\`
+
+            ### How to resolve locally
+            \`\`\`bash
+            git clone https://github.com/${{ context.repo.owner }}/${{ context.repo.repo }}.git
+            cd ${{ context.repo.repo }}
+            git remote add upstream https://github.com/${{ github.repository_owner }}/unity-mcp.git
+            git fetch upstream
+            git checkout -B sync/merge-upstream origin/main
+            git merge upstream/main
+            # resolve conflicts, then:
+            git add .
+            git commit -m "Resolve upstream merge conflicts"
+            git push -u origin sync/merge-upstream
+            \`\`\`
+            Then open a PR from \`sync/merge-upstream\` to \`main\`.
+            `;
+            // Avoid duplicates: if an open conflict issue exists, add a comment instead
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'auto-sync-conflict'
+            });
+            if (existing.data.length > 0) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.data[0].number,
+                body: "Another sync attempt failed due to merge conflicts.\n\n" + body
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: ['auto-sync-conflict','needs-attention']
+              });
+            }
