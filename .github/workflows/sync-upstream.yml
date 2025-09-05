@@ -29,43 +29,49 @@ jobs:
           git remote add upstream https://github.com/CoplayDev/unity-mcp.git || true
           git fetch upstream main
 
-      - name: Show state (debug)
+      - name: Debug state
         run: |
-          echo "GITHUB_REF_NAME=$GITHUB_REF_NAME"
-          git remote -v
-          git status
+          echo "Current branch: $(git symbolic-ref --short HEAD || echo '<detached>')"
+          echo "Our HEAD: $(git rev-parse --short HEAD)"
+          echo "Upstream main: $(git rev-parse --short upstream/main)"
+          echo "Ahead count (us..upstream): $(git rev-list --count HEAD..upstream/main)"
           git log --oneline --graph --decorate -n 10
 
-      - name: Fast-forward if possible
+      - name: Decide if behind
+        id: behind
+        run: |
+          AHEAD=$(git rev-list --count HEAD..upstream/main)
+          if [ "$AHEAD" -gt 0 ]; then
+            echo "behind=true" >> $GITHUB_OUTPUT
+          else
+            echo "behind=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Fast-forward (no merge commit)
         id: ff
+        if: steps.behind.outputs.behind == 'true'
         run: |
           set -e
-          # Ensure we are on a branch
           git checkout -B main
-          # Check if anything to update
-          if [ "$(git rev-list --count HEAD..upstream/main)" -eq 0 ]; then
-            echo "changed=false" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-          # Try fast-forward only (no merge commits)
           if git merge --ff-only upstream/main; then
-            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "mode=push" >> $GITHUB_OUTPUT
           else
-            echo "changed=pr" >> $GITHUB_OUTPUT
+            echo "mode=pr" >> $GITHUB_OUTPUT
           fi
 
       - name: Push fast-forward
-        if: steps.ff.outputs.changed == 'true'
+        if: steps.ff.outputs.mode == 'push'
         run: |
           git push origin main
+          echo "Pushed FF update to origin/main"
 
-      - name: Create PR instead (branch protection or conflicts)
-        if: steps.ff.outputs.changed == 'pr'
+      - name: Create PR (cannot FF or push blocked)
+        if: steps.ff.outputs.mode == 'pr'
         uses: peter-evans/create-pull-request@v6
         with:
           branch: sync/upstream-main
           title: "Sync: upstream/main → main"
-          body: "Automated sync from upstream."
+          body: "Automated sync from upstream. FF not possible (or push blocked by rules)."
           commit-message: "Sync fork with upstream"
           base: main
           delete-branch: true
