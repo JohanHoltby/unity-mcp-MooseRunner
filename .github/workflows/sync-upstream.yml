@@ -2,7 +2,7 @@ name: Sync Fork with Upstream
 
 on:
   schedule:
-    - cron: '0 * * * *'
+    - cron: '0 * * * *'   # hourly (UTC)
   workflow_dispatch:
 
 jobs:
@@ -12,19 +12,23 @@ jobs:
       contents: write
       pull-requests: write
       issues: write
-      workflows: write   # <-- needed to push commits that change .github/workflows/*.yml
+
+    env:
+      SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
 
     steps:
-      - name: Checkout main
+      - name: Checkout main (with PAT)
         uses: actions/checkout@v4
         with:
           ref: main
           fetch-depth: 0
+          token: ${{ env.SYNC_TOKEN }}
 
-      - name: Configure git
+      - name: Configure git + set origin to PAT
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin https://x-access-token:${SYNC_TOKEN}@github.com/${{ github.repository }}.git
 
       - name: Add upstream and fetch
         run: |
@@ -60,12 +64,13 @@ jobs:
             echo "mode=merge_pr" >> $GITHUB_OUTPUT
           fi
 
-      - name: Push fast-forward
+      - name: Push fast-forward (PAT)
         if: steps.ff.outputs.mode == 'push'
         run: |
           git push origin main
           echo "Pushed FF update to origin/main"
 
+      # Create a real branch and try a merge so there's something to PR
       - name: Create merge branch with upstream changes
         id: merge_branch
         if: steps.ff.outputs.mode == 'merge_pr'
@@ -96,6 +101,7 @@ jobs:
           commit-message: "Sync fork with upstream"
           delete-branch: false
           draft: false
+          token: ${{ env.SYNC_TOKEN }}
 
       - name: Create/Update issue on conflict
         if: steps.merge_branch.outputs.conflict == 'true'
