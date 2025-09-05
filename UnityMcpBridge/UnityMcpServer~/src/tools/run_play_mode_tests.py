@@ -106,18 +106,48 @@ def register_run_play_mode_tests_tools(mcp: FastMCP):
                             
                             # Return when test completes
                             elif workflow_status == "COMPLETED":
+                                # Extract test results if available
+                                test_result = data.get("test_result", "Unknown")
+                                test_summary = data.get("test_summary", {})
+                                
+                                # Build detailed message with test results
+                                result_message = f"Test execution completed: {test_description}"
+                                
+                                # Add result status
+                                result_message += f" (Result: {test_result}"
+                                
+                                # Add counts if available
+                                if test_summary and test_summary.get("total", -1) >= 0:
+                                    result_message += f", Total: {test_summary.get('total', 0)}"
+                                    result_message += f", Passed: {test_summary.get('passed', 0)}"
+                                    result_message += f", Failed: {test_summary.get('failed', 0)}"
+                                    if test_summary.get('not_run', 0) > 0:
+                                        result_message += f", Not Run: {test_summary.get('not_run', 0)}"
+                                
+                                result_message += ")"
+                                
                                 if test_started:
                                     return {
                                         "success": True, 
-                                        "message": f"Test execution completed: {test_description}",
-                                        "data": {"workflow_status": workflow_status, "test_executed": True}
+                                        "message": result_message,
+                                        "data": {
+                                            "workflow_status": workflow_status, 
+                                            "test_executed": True,
+                                            "test_result": test_result,
+                                            "test_summary": test_summary
+                                        }
                                     }
                                 else:
                                     # Test completed but never saw it start (might have been very quick)
                                     return {
                                         "success": True, 
-                                        "message": f"Test execution completed: {test_description} (immediate completion)",
-                                        "data": {"workflow_status": workflow_status, "test_executed": True}
+                                        "message": result_message + " (immediate completion)",
+                                        "data": {
+                                            "workflow_status": workflow_status, 
+                                            "test_executed": True,
+                                            "test_result": test_result,
+                                            "test_summary": test_summary
+                                        }
                                     }
                         
                     except Exception as e:

@@ -29,12 +29,44 @@ namespace MCPForUnity.Editor.Tools
                     case "status":
                         // Get workflow status with error information
                         var statusInfo = MooseRunnerAPI.Instance.GetWorkflowStatusWithError();
-                        return Response.Success("Workflow status retrieved", new {
-                            workflow_status = statusInfo.status,
-                            error_message = statusInfo.error,
-                            is_playing = UnityEditor.EditorApplication.isPlaying,
-                            is_compiling = UnityEditor.EditorApplication.isCompiling
-                        });
+                        
+                        // Prepare the response data - use object type to allow different values
+                        object responseData;
+                        
+                        // If workflow is completed, include test results
+                        if (statusInfo.status == "COMPLETED")
+                        {
+                            var testResult = MooseRunnerAPI.Instance.GetTestExecutionResult();
+                            var testSummary = MooseRunnerAPI.Instance.GetTestExecutionSummary();
+                            
+                            responseData = new {
+                                workflow_status = statusInfo.status,
+                                error_message = statusInfo.error,
+                                is_playing = UnityEditor.EditorApplication.isPlaying,
+                                is_compiling = UnityEditor.EditorApplication.isCompiling,
+                                test_result = testResult.ToString(),
+                                test_summary = new {
+                                    status = testSummary.status.ToString(),
+                                    total = testSummary.total,
+                                    passed = testSummary.passed,
+                                    failed = testSummary.failed,
+                                    not_run = testSummary.notRun
+                                }
+                            };
+                        }
+                        else
+                        {
+                            responseData = new {
+                                workflow_status = statusInfo.status,
+                                error_message = statusInfo.error,
+                                is_playing = UnityEditor.EditorApplication.isPlaying,
+                                is_compiling = UnityEditor.EditorApplication.isCompiling,
+                                test_result = (string)null,
+                                test_summary = (object)null
+                            };
+                        }
+                        
+                        return Response.Success("Workflow status retrieved", responseData);
                     default:
                         return Response.Error(
                             $"Unknown action: '{action}'. Valid actions are 'execute', 'get_available_menus'."
