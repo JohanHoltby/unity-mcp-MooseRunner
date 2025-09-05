@@ -110,8 +110,14 @@ namespace MCPForUnity.Editor.Tools
         /// </summary>
         public static object HandleCommand(JObject @params)
         {
+            // Handle null parameters
+            if (@params == null)
+            {
+                return Response.Error("invalid_params", "Parameters cannot be null.");
+            }
+            
             // Extract parameters
-            string action = @params["action"]?.ToString().ToLower();
+            string action = @params["action"]?.ToString()?.ToLower();
             string name = @params["name"]?.ToString();
             string path = @params["path"]?.ToString(); // Relative to Assets/
             string contents = null;
@@ -665,8 +671,11 @@ namespace MCPForUnity.Editor.Tools
                 string next = working.Remove(sp.start, sp.end - sp.start).Insert(sp.start, sp.text ?? string.Empty);
                 if (relaxed)
                 {
-                    // Scoped balance check: validate just around the changed region to avoid false positives
-                    if (!CheckScopedBalance(next, Math.Max(0, sp.start - 500), Math.Min(next.Length, sp.start + (sp.text?.Length ?? 0) + 500)))
+                    // Scoped balance check: validate just around the changed region to avoid false positives  
+                    int originalLength = sp.end - sp.start;
+                    int newLength = sp.text?.Length ?? 0;
+                    int endPos = sp.start + newLength;
+                    if (!CheckScopedBalance(next, Math.Max(0, sp.start - 500), Math.Min(next.Length, endPos + 500)))
                     {
                         return Response.Error("unbalanced_braces", new { status = "unbalanced_braces", line = 0, expected = "{}()[] (scoped)", hint = "Use standard validation or shrink the edit range." });
                     }
@@ -692,7 +701,8 @@ namespace MCPForUnity.Editor.Tools
                 );
             }
 
-            if (!relaxed && !CheckBalancedDelimiters(working, out int line, out char expected))
+            // Always check final structural balance regardless of relaxed mode
+            if (!CheckBalancedDelimiters(working, out int line, out char expected))
             {
                 int startLine = Math.Max(1, line - 5);
                 int endLine = line + 5;
@@ -935,9 +945,9 @@ namespace MCPForUnity.Editor.Tools
                 if (c == '{') brace++; else if (c == '}') brace--;
                 else if (c == '(') paren++; else if (c == ')') paren--;
                 else if (c == '[') bracket++; else if (c == ']') bracket--;
-                if (brace < 0 || paren < 0 || bracket < 0) return false;
+                // Allow temporary negative balance - will check tolerance at end
             }
-            return brace >= -1 && paren >= -1 && bracket >= -1; // tolerate context from outside region
+            return brace >= -3 && paren >= -3 && bracket >= -3; // tolerate more context from outside region
         }
 
         private static object DeleteScript(string fullPath, string relativePath)

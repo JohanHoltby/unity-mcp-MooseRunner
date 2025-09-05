@@ -179,8 +179,18 @@ namespace MCPForUnity.Editor.Tools
                 }
                 else if (lowerAssetType == "material")
                 {
-                    Material mat = new Material(Shader.Find("Standard")); // Default shader
-                    // TODO: Apply properties from JObject (e.g., shader name, color, texture assignments)
+                    // Prefer provided shader; fall back to common pipelines
+                    var requested = properties?["shader"]?.ToString();
+                    Shader shader =
+                        (!string.IsNullOrEmpty(requested) ? Shader.Find(requested) : null)
+                        ?? Shader.Find("Universal Render Pipeline/Lit")
+                        ?? Shader.Find("HDRP/Lit")
+                        ?? Shader.Find("Standard")
+                        ?? Shader.Find("Unlit/Color");
+                    if (shader == null)
+                        return Response.Error($"Could not find a suitable shader (requested: '{requested ?? "none"}').");
+
+                    var mat = new Material(shader);
                     if (properties != null)
                         ApplyMaterialProperties(mat, properties);
                     AssetDatabase.CreateAsset(mat, fullPath);
@@ -1261,24 +1271,32 @@ namespace MCPForUnity.Editor.Tools
                     {
                         // Ensure texture is readable for EncodeToPNG
                         // Creating a temporary readable copy is safer
-                        RenderTexture rt = RenderTexture.GetTemporary(
-                            preview.width,
-                            preview.height
-                        );
-                        Graphics.Blit(preview, rt);
+                        RenderTexture rt = null;
+                        Texture2D readablePreview = null;
                         RenderTexture previous = RenderTexture.active;
-                        RenderTexture.active = rt;
-                        Texture2D readablePreview = new Texture2D(preview.width, preview.height);
-                        readablePreview.ReadPixels(new Rect(0, 0, rt.width, rt.height), 0, 0);
-                        readablePreview.Apply();
-                        RenderTexture.active = previous;
-                        RenderTexture.ReleaseTemporary(rt);
+                        try
+                        {
+                            rt = RenderTexture.GetTemporary(preview.width, preview.height);
+                            Graphics.Blit(preview, rt);
+                            RenderTexture.active = rt;
+                            readablePreview = new Texture2D(preview.width, preview.height, TextureFormat.RGB24, false);
+                            readablePreview.ReadPixels(new Rect(0, 0, rt.width, rt.height), 0, 0);
+                            readablePreview.Apply();
 
-                        byte[] pngData = readablePreview.EncodeToPNG();
-                        previewBase64 = Convert.ToBase64String(pngData);
-                        previewWidth = readablePreview.width;
-                        previewHeight = readablePreview.height;
-                        UnityEngine.Object.DestroyImmediate(readablePreview); // Clean up temp texture
+                            var pngData = readablePreview.EncodeToPNG();
+                            if (pngData != null && pngData.Length > 0)
+                            {
+                                previewBase64 = Convert.ToBase64String(pngData);
+                                previewWidth = readablePreview.width;
+                                previewHeight = readablePreview.height;
+                            }
+                        }
+                        finally
+                        {
+                            RenderTexture.active = previous;
+                            if (rt != null) RenderTexture.ReleaseTemporary(rt);
+                            if (readablePreview != null) UnityEngine.Object.DestroyImmediate(readablePreview);
+                        }
                     }
                     catch (Exception ex)
                     {

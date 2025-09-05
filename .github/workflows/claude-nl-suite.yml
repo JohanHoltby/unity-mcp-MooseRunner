@@ -273,7 +273,7 @@ jobs:
           continue-on-error: true
           with:
             use_node_cache: false
-            prompt_file: .claude/prompts/nl-unity-suite-full.md
+            prompt_file: .claude/prompts/nl-unity-suite-full-additive.md
             mcp_config: .claude/mcp.json
             allowed_tools: >-
               Write,
