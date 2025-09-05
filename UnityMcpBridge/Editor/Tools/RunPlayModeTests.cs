@@ -57,8 +57,8 @@ namespace MCPForUnity.Editor.Tools
             // We don't need to check play mode here.
 
             // Try both naming conventions: snake_case and camelCase
-            string test_assembly = @params["test_assembly"]?.ToString() ?? @params["test_assambly"]?.ToString();
-            string test_class = @params["test_class"]?.ToString() ?? @params["test_clas"]?.ToString();
+            string test_assembly = @params["test_assembly"]?.ToString();
+            string test_class = @params["test_class"]?.ToString();
             string test_method = @params["test_method"]?.ToString();
             
             try
@@ -68,27 +68,9 @@ namespace MCPForUnity.Editor.Tools
                                    string.IsNullOrEmpty(test_class) && 
                                    string.IsNullOrEmpty(test_method);
                 
-                // When running a specific method, don't pass the assembly (per MooseRunner API requirements)
-                string assemblyToPass = null;
-                if (!string.IsNullOrEmpty(test_method))
-                {
-                    // Method selection should not include assembly
-                    assemblyToPass = null;
-                }
-                else if (!string.IsNullOrEmpty(test_class))
-                {
-                    // Class selection should not include assembly  
-                    assemblyToPass = null;
-                }
-                else if (!string.IsNullOrEmpty(test_assembly))
-                {
-                    // Only assembly selection includes the assembly
-                    assemblyToPass = test_assembly;
-                }
-                
                 // Call the MooseRunnerAPI which now handles all validation and thread safety internally
                 // The API will throw exceptions for invalid parameters, which we catch and return as errors
-                MooseRunnerAPI.Instance.RunTest(rootSelected, assemblyToPass, test_class, test_method);
+                MooseRunnerAPI.Instance.RunTest(rootSelected, test_assembly, test_class, test_method);
                 
                 // Build description of what's being run
                 string testDescription;
@@ -106,7 +88,7 @@ namespace MCPForUnity.Editor.Tools
                 }
                 else
                 {
-                    testDescription = $"Assembly: {assemblyToPass}";
+                    testDescription = $"Assembly: {test_assembly}";
                 }
                     
                 return Response.Success(

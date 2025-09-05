@@ -16,37 +16,35 @@ def register_run_play_mode_tests_tools(mcp: FastMCP):
     def run_play_mode_tests(
         ctx: Context,
         action: str,
-        test_assambly: str,
-        test_clas: str,
+        test_assembly: str,
+        test_class: str,
         test_method: str,
+        timeout: int = 120,
     ) -> Dict[str, Any]:
-        """Run play mode tests (start).
+        """Run play mode tests.
+        
+        Method requires: test_method, test_class and may set test_assembly (if multiple class exist with same name in different assemblies).
+        Class require: test_class to be set and may set test_assembly.
+        Assembly require: test_assembly to be set.
+        If all playmode test in project should be run leave all test_method, test_class and test_assembly default.
 
         Args:
             action: Operation ('run', 'status').
-            test_assambly: The assambly specifified if an asambly, class or method is to be tested (default: "").
-            test_clas: The class specifified if a class or method is to be tested (default: "").
-            test_method: The method specifified if a method is to be tested (default: "")..
-
+            test_assembly: The assambly specifified if an asambly, if not specified first class found in an asambly will be used. (default: "").
+            test_class: The class specifified NEEDED if a class or method is to be tested (default: "").
+            test_method: The method specifified. NEEDED if a method is to be tested (default: "").
+            timeout: Maximum time in seconds to wait for test completion (default: 120, max: 600).
+ 
         Returns:
             Dictionary with results ('success', 'message', 'data').
         """
         try:
-            if action == "status":
-                # Pass through status request
-                response = send_command_with_retry("run_play_mode_tests", {"action": "status"})
-                
-                # Preserve structured failure data; unwrap success into a friendlier shape
-                if isinstance(response, dict) and response.get("success"):
-                    return {"success": True, "message": response.get("message", "Status retrieved"), "data": response.get("data")}
-                return response if isinstance(response, dict) else {"success": False, "message": str(response)}
-                
-            elif action == "run":
+            if action == "run":
                 # Start test execution
                 params = {
                     "action": "run",
-                    "test_assambly": test_assambly,
-                    "test_clas": test_clas,
+                    "test_assembly": test_assembly,
+                    "test_class": test_class,
                     "test_method": test_method,
                 }
                 
@@ -59,17 +57,19 @@ def register_run_play_mode_tests_tools(mcp: FastMCP):
                     return response
                 
                 # Build test description for messages
-                if not test_assambly and not test_clas and not test_method:
+                if not test_assembly and not test_class and not test_method:
                     test_description = "all tests"
                 elif test_method:
-                    test_description = f"Class: {test_clas}, Method: {test_method}"
-                elif test_clas:
-                    test_description = f"Class: {test_clas}"
+                    test_description = f"Class: {test_class}, Method: {test_method}"
+                elif test_class:
+                    test_description = f"Class: {test_class}"
                 else:
-                    test_description = f"Assembly: {test_assambly}"
+                    test_description = f"Assembly: {test_assembly}"
                     
+                # Validate and clamp timeout to reasonable bounds
+                timeout = max(1, min(timeout, 600))  # Clamp between 1 and 600 seconds
+                
                 # Poll for test to complete
-                timeout = 60.0  # 60 second timeout for full test execution
                 start_time = time.time()
                 last_status = ""
                 test_started = False
@@ -121,12 +121,12 @@ def register_run_play_mode_tests_tools(mcp: FastMCP):
                 if test_started:
                     return {
                         "success": False, 
-                        "message": f"Timeout waiting for test to complete: {test_description} (test was running)"
+                        "message": f"Timeout ({timeout}s) waiting for test to complete: {test_description} (test was running)"
                     }
                 else:
                     return {
                         "success": False, 
-                        "message": f"Timeout waiting for test to start: {test_description}"
+                        "message": f"Timeout ({timeout}s) waiting for test to start: {test_description}"
                     }
             else:
                 return {"success": False, "message": f"Unknown action: {action}"}
