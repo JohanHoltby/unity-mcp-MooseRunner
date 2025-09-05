@@ -66,7 +66,7 @@ jobs:
           git push origin main
           echo "Pushed FF update to origin/main"
 
-      # Create a real branch and try a merge commit so there's something to PR
+      # Create a real branch and try a merge so there's something to PR
       - name: Create merge branch with upstream changes
         id: merge_branch
         if: steps.ff.outputs.mode == 'merge_pr'
@@ -79,10 +79,8 @@ jobs:
           set -e
           if [ $MERGE_STATUS -ne 0 ]; then
             echo "conflict=true" >> $GITHUB_OUTPUT
-            # capture conflicting files
             CONFLICTS=$(git diff --name-only --diff-filter=U || true)
             printf "conflict_files<<EOF\n%s\nEOF\n" "$CONFLICTS" >> $GITHUB_OUTPUT
-            # abort merge to leave working tree clean for subsequent steps
             git merge --abort || true
           else
             echo "conflict=false" >> $GITHUB_OUTPUT
@@ -95,9 +93,10 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const {data: pr} = await github.rest.pulls.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
+            const { owner, repo } = context.repo;
+            const { data: pr } = await github.rest.pulls.create({
+              owner,
+              repo,
               title: "Sync: Merge upstream/main into main",
               head: "sync/merge-upstream",
               base: "main",
@@ -108,28 +107,31 @@ jobs:
       - name: Create issue on conflict
         if: steps.merge_branch.outputs.conflict == 'true'
         uses: actions/github-script@v7
+        env:
+          CONFLICT_FILES: ${{ steps.merge_branch.outputs.conflict_files }}
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const conflicts = `\n${{ steps.merge_branch.outputs.conflict_files || '' }}\n`.trim() || '(files not listed)';
+            const { owner, repo } = context.repo;
+            const conflictFiles = (process.env.CONFLICT_FILES || '').trim() || '(files not listed)';
             const title = "⚠️ Auto-sync failed: Merge conflict with upstream/main";
             const body = `
             The automatic sync from upstream failed due to merge conflicts.
 
-            **Upstream:** \`${{ github.repository_owner }}/unity-mcp\` (branch: \`main\`)
-            **Fork:** \`${{ context.repo.owner }}/${{ context.repo.repo }}\`
-            **Workflow Run:** https://github.com/${{ context.repo.owner }}/${{ context.repo.repo }}/actions/runs/${{ context.runId }}
+            **Upstream:** \`CoplayDev/unity-mcp\` (branch: \`main\`)
+            **Fork:** \`${owner}/${repo}\`
+            **Workflow Run:** https://github.com/${owner}/${repo}/actions/runs/${context.runId}
 
             ### Conflicting files
             \`\`\`
-            ${conflicts}
+            ${conflictFiles}
             \`\`\`
 
             ### How to resolve locally
             \`\`\`bash
-            git clone https://github.com/${{ context.repo.owner }}/${{ context.repo.repo }}.git
-            cd ${{ context.repo.repo }}
-            git remote add upstream https://github.com/${{ github.repository_owner }}/unity-mcp.git
+            git clone https://github.com/${owner}/${repo}.git
+            cd ${repo}
+            git remote add upstream https://github.com/CoplayDev/unity-mcp.git
             git fetch upstream
             git checkout -B sync/merge-upstream origin/main
             git merge upstream/main
@@ -139,25 +141,21 @@ jobs:
             git push -u origin sync/merge-upstream
             \`\`\`
             Then open a PR from \`sync/merge-upstream\` to \`main\`.
-            `;
+            `.trim();
+
             // Avoid duplicates: if an open conflict issue exists, add a comment instead
             const existing = await github.rest.issues.listForRepo({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              state: 'open',
-              labels: 'auto-sync-conflict'
+              owner, repo, state: 'open', labels: 'auto-sync-conflict'
             });
             if (existing.data.length > 0) {
               await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
+                owner, repo,
                 issue_number: existing.data[0].number,
                 body: "Another sync attempt failed due to merge conflicts.\n\n" + body
               });
             } else {
               await github.rest.issues.create({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
+                owner, repo,
                 title,
                 body,
                 labels: ['auto-sync-conflict','needs-attention']
