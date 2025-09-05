@@ -2,317 +2,70 @@ name: Sync Fork with Upstream
 
 on:
   schedule:
-    # Runs every hour at minute 0
     - cron: '0 * * * *'
-  workflow_dispatch:  # Allows manual trigger from GitHub Actions UI
+  workflow_dispatch:
 
 jobs:
   sync:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      issues: write
-    
+      pull-requests: write
+
     steps:
-      - name: Checkout repository
+      - name: Checkout main
         uses: actions/checkout@v4
         with:
+          ref: main
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Configure git
         run: |
-          git config user.name "GitHub Actions"
-          git config user.email "actions@github.com"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Add upstream remote
+      - name: Add upstream and fetch
         run: |
-          # Add upstream remote if it doesn't exist
           git remote add upstream https://github.com/CoplayDev/unity-mcp.git || true
-          echo "Fetching latest from upstream..."
-          git fetch upstream
+          git fetch upstream main
 
-      - name: Check for upstream changes
-        id: check_changes
+      - name: Show state (debug)
         run: |
-          # Get current branch
-          CURRENT_BRANCH=$(git branch --show-current)
-          echo "Current branch: $CURRENT_BRANCH"
-          
-          # Check if there are any new commits from upstream
-          UPSTREAM_COMMITS=$(git rev-list HEAD..upstream/main --count)
-          echo "New commits from upstream: $UPSTREAM_COMMITS"
-          
-          if [ "$UPSTREAM_COMMITS" -eq 0 ]; then
-            echo "No new changes from upstream"
-            echo "has_changes=false" >> $GITHUB_OUTPUT
+          echo "GITHUB_REF_NAME=$GITHUB_REF_NAME"
+          git remote -v
+          git status
+          git log --oneline --graph --decorate -n 10
+
+      - name: Fast-forward if possible
+        id: ff
+        run: |
+          set -e
+          # Ensure we are on a branch
+          git checkout -B main
+          # Check if anything to update
+          if [ "$(git rev-list --count HEAD..upstream/main)" -eq 0 ]; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          # Try fast-forward only (no merge commits)
+          if git merge --ff-only upstream/main; then
+            echo "changed=true" >> $GITHUB_OUTPUT
           else
-            echo "Found $UPSTREAM_COMMITS new commits from upstream"
-            echo "has_changes=true" >> $GITHUB_OUTPUT
+            echo "changed=pr" >> $GITHUB_OUTPUT
           fi
 
-      - name: Attempt auto-merge
-        id: merge
-        if: steps.check_changes.outputs.has_changes == 'true'
-        continue-on-error: true
+      - name: Push fast-forward
+        if: steps.ff.outputs.changed == 'true'
         run: |
-          # Get the current branch
-          CURRENT_BRANCH=$(git branch --show-current)
-          echo "Current branch: $CURRENT_BRANCH"
-          
-          # Store the current commit hash
-          BEFORE_MERGE=$(git rev-parse HEAD)
-          echo "Current HEAD: $BEFORE_MERGE"
-          
-          # Try to merge upstream/main into current branch
-          echo "Attempting to merge upstream/main..."
-          if git merge upstream/main --no-edit -m "Auto-merge upstream changes from CoplayDev/unity-mcp"; then
-            echo "✅ Merge successful!"
-            echo "merge_status=success" >> $GITHUB_OUTPUT
-            
-            # Get the new commit hash
-            AFTER_MERGE=$(git rev-parse HEAD)
-            echo "New HEAD: $AFTER_MERGE"
-            
-            # Get list of changed files
-            echo "changed_files<<EOF" >> $GITHUB_OUTPUT
-            git diff --name-only $BEFORE_MERGE..$AFTER_MERGE >> $GITHUB_OUTPUT
-            echo "EOF" >> $GITHUB_OUTPUT
-            
-            # Push the changes
-            echo "Pushing merged changes to origin..."
-            git push origin $CURRENT_BRANCH
-            echo "✅ Changes pushed successfully!"
-            
-            # Get merge summary
-            COMMITS_MERGED=$(git rev-list $BEFORE_MERGE..$AFTER_MERGE --count)
-            echo "commits_merged=$COMMITS_MERGED" >> $GITHUB_OUTPUT
-            
-          else
-            echo "❌ Merge conflict detected!"
-            echo "merge_status=conflict" >> $GITHUB_OUTPUT
-            
-            # Get conflict details
-            echo "conflict_files<<EOF" >> $GITHUB_OUTPUT
-            git diff --name-only --diff-filter=U >> $GITHUB_OUTPUT
-            echo "EOF" >> $GITHUB_OUTPUT
-            
-            # Get conflict markers for first few files (for issue body)
-            echo "conflict_details<<EOF" >> $GITHUB_OUTPUT
-            for file in $(git diff --name-only --diff-filter=U | head -5); do
-              echo "File: $file"
-              echo "---"
-              git diff $file | head -50
-              echo ""
-            done
-            echo "EOF" >> $GITHUB_OUTPUT
-            
-            # Abort the merge
-            git merge --abort
-          fi
+          git push origin main
 
-      - name: Create issue on conflict
-        if: steps.merge.outputs.merge_status == 'conflict'
-        uses: actions/github-script@v7
+      - name: Create PR instead (branch protection or conflicts)
+        if: steps.ff.outputs.changed == 'pr'
+        uses: peter-evans/create-pull-request@v6
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const issueTitle = `⚠️ Auto-sync failed: Merge conflict with upstream`;
-            const conflictFiles = `${{ steps.merge.outputs.conflict_files }}`;
-            const conflictDetails = `${{ steps.merge.outputs.conflict_details }}`;
-            const timestamp = new Date().toISOString();
-            
-            // Check if similar issue already exists and is open
-            const existingIssues = await github.rest.issues.listForRepo({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              state: 'open',
-              labels: 'auto-sync-conflict'
-            });
-            
-            if (existingIssues.data.length > 0) {
-              console.log('Conflict issue already exists, updating it...');
-              const issue = existingIssues.data[0];
-              
-              // Add a comment to the existing issue
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: issue.number,
-                body: `## Another sync attempt failed
-                
-                **Time:** ${timestamp}
-                
-                The conflicts still exist. Please resolve them manually.
-                
-                ### Current conflicting files:
-                \`\`\`
-                ${conflictFiles}
-                \`\`\`
-                `
-              });
-              return;
-            }
-            
-            // Create new issue
-            const issueBody = `
-            ## Auto-sync with upstream failed due to merge conflicts
-            
-            The automatic sync from [CoplayDev/unity-mcp](https://github.com/CoplayDev/unity-mcp) has failed due to merge conflicts that require manual resolution.
-            
-            **Time:** ${timestamp}
-            **Workflow Run:** [View Run](https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})
-            
-            ### ❌ Conflicting files:
-            \`\`\`
-            ${conflictFiles}
-            \`\`\`
-            
-            ### 📋 Conflict preview (first 5 files):
-            \`\`\`diff
-            ${conflictDetails}
-            \`\`\`
-            
-            ### 🔧 Action required - Manual resolution steps:
-            
-            1. **Clone your fork locally** (if not already done):
-               \`\`\`bash
-               git clone git@github.com:JohanHoltby/unity-mcp-MooseRunner.git
-               cd unity-mcp-MooseRunner
-               \`\`\`
-            
-            2. **Add the upstream remote** (if not already added):
-               \`\`\`bash
-               git remote add upstream https://github.com/CoplayDev/unity-mcp.git
-               \`\`\`
-            
-            3. **Fetch latest from upstream**:
-               \`\`\`bash
-               git fetch upstream
-               \`\`\`
-            
-            4. **Merge or rebase with upstream**:
-               \`\`\`bash
-               # Option A: Merge (preserves your commit history)
-               git merge upstream/main
-               
-               # Option B: Rebase (creates cleaner history)
-               git rebase upstream/main
-               \`\`\`
-            
-            5. **Resolve conflicts** in the listed files:
-               - Open each conflicting file
-               - Look for conflict markers: \`<<<<<<<\`, \`=======\`, \`>>>>>>>\`
-               - Choose which changes to keep or combine them
-               - Remove the conflict markers
-            
-            6. **Complete the merge/rebase**:
-               \`\`\`bash
-               # If merging:
-               git add .
-               git commit -m "Resolve conflicts with upstream"
-               
-               # If rebasing:
-               git add .
-               git rebase --continue
-               \`\`\`
-            
-            7. **Push to your fork**:
-               \`\`\`bash
-               git push origin main
-               \`\`\`
-            
-            ### 📊 Additional Information
-            
-            - This issue will be automatically closed when the conflicts are resolved
-            - The sync workflow runs hourly and will automatically resume once conflicts are resolved
-            - You can manually trigger the sync workflow from the [Actions tab](https://github.com/${context.repo.owner}/${context.repo.repo}/actions/workflows/sync-upstream.yml)
-            
-            ### 🏷️ Labels
-            This issue has been labeled with \`auto-sync-conflict\` and \`needs-attention\` for easy tracking.
-            `;
-            
-            await github.rest.issues.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: issueTitle,
-              body: issueBody,
-              labels: ['auto-sync-conflict', 'needs-attention']
-            });
-            
-            console.log('Conflict issue created successfully');
-
-      - name: Close resolved conflict issues
-        if: steps.merge.outputs.merge_status == 'success'
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            // Check for open conflict issues
-            const existingIssues = await github.rest.issues.listForRepo({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              state: 'open',
-              labels: 'auto-sync-conflict'
-            });
-            
-            if (existingIssues.data.length > 0) {
-              for (const issue of existingIssues.data) {
-                // Close the issue with a success comment
-                await github.rest.issues.createComment({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number: issue.number,
-                  body: `✅ **Conflicts resolved!**
-                  
-                  The upstream changes have been successfully merged.
-                  
-                  - Commits merged: ${{ steps.merge.outputs.commits_merged }}
-                  - Changed files:
-                  \`\`\`
-                  ${{ steps.merge.outputs.changed_files }}
-                  \`\`\`
-                  
-                  This issue is now being closed automatically.`
-                });
-                
-                await github.rest.issues.update({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number: issue.number,
-                  state: 'closed'
-                });
-                
-                console.log(`Closed resolved conflict issue #${issue.number}`);
-              }
-            }
-
-      - name: Summary
-        if: always()
-        run: |
-          echo "## Sync Workflow Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
-          if [ "${{ steps.check_changes.outputs.has_changes }}" == "false" ]; then
-            echo "✅ **No new changes from upstream**" >> $GITHUB_STEP_SUMMARY
-            echo "Your fork is already up-to-date with CoplayDev/unity-mcp" >> $GITHUB_STEP_SUMMARY
-          elif [ "${{ steps.merge.outputs.merge_status }}" == "success" ]; then
-            echo "✅ **Successfully synced with upstream!**" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "- Commits merged: ${{ steps.merge.outputs.commits_merged }}" >> $GITHUB_STEP_SUMMARY
-            echo "- Changed files:" >> $GITHUB_STEP_SUMMARY
-            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-            echo "${{ steps.merge.outputs.changed_files }}" >> $GITHUB_STEP_SUMMARY
-            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          elif [ "${{ steps.merge.outputs.merge_status }}" == "conflict" ]; then
-            echo "⚠️ **Merge conflicts detected**" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "An issue has been created with details about the conflicts." >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "Conflicting files:" >> $GITHUB_STEP_SUMMARY
-            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-            echo "${{ steps.merge.outputs.conflict_files }}" >> $GITHUB_STEP_SUMMARY
-            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "ℹ️ **No action taken**" >> $GITHUB_STEP_SUMMARY
-          fi
+          branch: sync/upstream-main
+          title: "Sync: upstream/main → main"
+          body: "Automated sync from upstream."
+          commit-message: "Sync fork with upstream"
+          base: main
+          delete-branch: true
