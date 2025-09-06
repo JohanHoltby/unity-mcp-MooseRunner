@@ -66,6 +66,59 @@ To find it reliably:
 
 Note: In recent builds, the Python server sources are also bundled inside the package under `UnityMcpServer~/src`. This is handy for local testing or pointing MCP clients directly at the packaged server.
 
+## MCP Bridge Stress Test
+
+An on-demand stress utility exercises the MCP bridge with multiple concurrent clients while triggering real script reloads via immediate script edits (no menu calls required).
+
+### Script
+- `tools/stress_mcp.py`
+
+### What it does
+- Starts N TCP clients against the Unity MCP bridge (default port auto-discovered from `~/.unity-mcp/unity-mcp-status-*.json`).
+- Sends lightweight framed `ping` keepalives to maintain concurrency.
+- In parallel, appends a unique marker comment to a target C# file using `manage_script.apply_text_edits` with:
+  - `options.refresh = "immediate"` to force an import/compile immediately (triggers domain reload), and
+  - `precondition_sha256` computed from the current file contents to avoid drift.
+- Uses EOF insertion to avoid header/`using`-guard edits.
+
+### Usage (local)
+```bash
+# Recommended: use the included large script in the test project
+python3 tools/stress_mcp.py \
+  --duration 60 \
+  --clients 8 \
+  --unity-file "TestProjects/UnityMCPTests/Assets/Scripts/LongUnityScriptClaudeTest.cs"
+```
+
+Flags:
+- `--project` Unity project path (auto-detected to the included test project by default)
+- `--unity-file` C# file to edit (defaults to the long test script)
+- `--clients` number of concurrent clients (default 10)
+- `--duration` seconds to run (default 60)
+
+### Expected outcome
+- No Unity Editor crashes during reload churn
+- Immediate reloads after each applied edit (no `Assets/Refresh` menu calls)
+- Some transient disconnects or a few failed calls may occur during domain reload; the tool retries and continues
+- JSON summary printed at the end, e.g.:
+  - `{"port": 6400, "stats": {"pings": 28566, "applies": 69, "disconnects": 0, "errors": 0}}`
+
+### Notes and troubleshooting
+- Immediate vs debounced:
+  - The tool sets `options.refresh = "immediate"` so changes compile instantly. If you only need churn (not per-edit confirmation), switch to debounced to reduce mid-reload failures.
+- Precondition required:
+  - `apply_text_edits` requires `precondition_sha256` on larger files. The tool reads the file first to compute the SHA.
+- Edit location:
+  - To avoid header guards or complex ranges, the tool appends a one-line marker at EOF each cycle.
+- Read API:
+  - The bridge currently supports `manage_script.read` for file reads. You may see a deprecation warning; it's harmless for this internal tool.
+- Transient failures:
+  - Occasional `apply_errors` often indicate the connection reloaded mid-reply. Edits still typically apply; the loop continues on the next iteration.
+
+### CI guidance
+- Keep this out of default PR CI due to Unity/editor requirements and runtime variability.
+- Optionally run it as a manual workflow or nightly job on a Unity-capable runner.
+
 ## CI Test Workflow (GitHub Actions)
 
 We provide a CI job to run a Natural Language Editing mini-suite against the Unity test project. It spins up a headless Unity container and connects via the MCP bridge.

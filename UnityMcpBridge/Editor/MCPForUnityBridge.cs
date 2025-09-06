@@ -23,6 +23,11 @@ namespace MCPForUnity.Editor
         private static bool isRunning = false;
         private static readonly object lockObj = new();
         private static readonly object startStopLock = new();
+        private static readonly object clientsLock = new();
+        private static readonly System.Collections.Generic.HashSet<TcpClient> activeClients = new();
+        private static CancellationTokenSource cts;
+        private static Task listenerTask;
+        private static int processingCommands = 0;
         private static bool initScheduled = false;
         private static bool ensureUpdateHooked = false;
         private static bool isStarting = false;
@@ -193,9 +198,15 @@ namespace MCPForUnity.Editor
             }
 
             isStarting = true;
-            // Attempt start; if it succeeds, remove the hook to avoid overhead
-            Start();
-            isStarting = false;
+            try
+            {
+                // Attempt start; if it succeeds, remove the hook to avoid overhead
+                Start();
+            }
+            finally
+            {
+                isStarting = false;
+            }
             if (isRunning)
             {
                 EditorApplication.update -= EnsureStartedOnEditorIdle;
@@ -319,8 +330,17 @@ namespace MCPForUnity.Editor
                     string platform = Application.platform.ToString();
                     string serverVer = ReadInstalledServerVersionSafe();
                     Debug.Log($"<b><color=#2EA3FF>MCP-FOR-UNITY</color></b>: MCPForUnityBridge started on port {currentUnityPort}. (OS={platform}, server={serverVer})");
-                    Task.Run(ListenerLoop);
+                    // Start background listener with cooperative cancellation
+                    cts = new CancellationTokenSource();
+                    listenerTask = Task.Run(() => ListenerLoopAsync(cts.Token));
                     EditorApplication.update += ProcessCommands;
+                    // Ensure lifecycle events are (re)subscribed in case Stop() removed them earlier in-domain
+                    try { AssemblyReloadEvents.beforeAssemblyReload -= OnBeforeAssemblyReload; } catch { }
+                    try { AssemblyReloadEvents.beforeAssemblyReload += OnBeforeAssemblyReload; } catch { }
+                    try { AssemblyReloadEvents.afterAssemblyReload -= OnAfterAssemblyReload; } catch { }
+                    try { AssemblyReloadEvents.afterAssemblyReload += OnAfterAssemblyReload; } catch { }
+                    try { EditorApplication.quitting -= Stop; } catch { }
+                    try { EditorApplication.quitting += Stop; } catch { }
                     // Write initial heartbeat immediately
                     heartbeatSeq++;
                     WriteHeartbeat(false, "ready");
@@ -335,6 +355,7 @@ namespace MCPForUnity.Editor
 
         public static void Stop()
         {
+            Task toWait = null;
             lock (startStopLock)
             {
                 if (!isRunning)
@@ -346,23 +367,55 @@ namespace MCPForUnity.Editor
                 {
                     // Mark as stopping early to avoid accept logging during disposal
                     isRunning = false;
-                    // Mark heartbeat one last time before stopping
-                    WriteHeartbeat(false, "stopped");
-                    listener?.Stop();
+
+                    // Quiesce background listener quickly
+                    var cancel = cts;
+                    cts = null;
+                    try { cancel?.Cancel(); } catch { }
+
+                    try { listener?.Stop(); } catch { }
                     listener = null;
-                    EditorApplication.update -= ProcessCommands;
-                    if (IsDebugEnabled()) Debug.Log("<b><color=#2EA3FF>MCP-FOR-UNITY</color></b>: MCPForUnityBridge stopped.");
+
+                    // Capture background task to wait briefly outside the lock
+                    toWait = listenerTask;
+                    listenerTask = null;
                 }
                 catch (Exception ex)
                 {
                     Debug.LogError($"Error stopping MCPForUnityBridge: {ex.Message}");
                 }
             }
+
+            // Proactively close all active client sockets to unblock any pending reads
+            TcpClient[] toClose;
+            lock (clientsLock)
+            {
+                toClose = activeClients.ToArray();
+                activeClients.Clear();
+            }
+            foreach (var c in toClose)
+            {
+                try { c.Close(); } catch { }
+            }
+
+            // Give the background loop a short window to exit without blocking the editor
+            if (toWait != null)
+            {
+                try { toWait.Wait(100); } catch { }
+            }
+
+            // Now unhook editor events safely
+            try { EditorApplication.update -= ProcessCommands; } catch { }
+            try { AssemblyReloadEvents.beforeAssemblyReload -= OnBeforeAssemblyReload; } catch { }
+            try { AssemblyReloadEvents.afterAssemblyReload -= OnAfterAssemblyReload; } catch { }
+            try { EditorApplication.quitting -= Stop; } catch { }
+
+            if (IsDebugEnabled()) Debug.Log("<b><color=#2EA3FF>MCP-FOR-UNITY</color></b>: MCPForUnityBridge stopped.");
         }
 
-        private static async Task ListenerLoop()
+        private static async Task ListenerLoopAsync(CancellationToken token)
         {
-            while (isRunning)
+            while (isRunning && !token.IsCancellationRequested)
             {
                 try
                 {
@@ -378,19 +431,23 @@ namespace MCPForUnity.Editor
                     client.ReceiveTimeout = 60000; // 60 seconds
 
                     // Fire and forget each client connection
-                    _ = HandleClientAsync(client);
+                    _ = Task.Run(() => HandleClientAsync(client, token), token);
                 }
                 catch (ObjectDisposedException)
                 {
                     // Listener was disposed during stop/reload; exit quietly
-                    if (!isRunning)
+                    if (!isRunning || token.IsCancellationRequested)
                     {
                         break;
                     }
                 }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
                 catch (Exception ex)
                 {
-                    if (isRunning)
+                    if (isRunning && !token.IsCancellationRequested)
                     {
                         if (IsDebugEnabled()) Debug.LogError($"Listener error: {ex.Message}");
                     }
@@ -398,11 +455,14 @@ namespace MCPForUnity.Editor
             }
         }
 
-        private static async Task HandleClientAsync(TcpClient client)
+        private static async Task HandleClientAsync(TcpClient client, CancellationToken token)
         {
             using (client)
             using (NetworkStream stream = client.GetStream())
             {
+                lock (clientsLock) { activeClients.Add(client); }
+                try
+                {
                 // Framed I/O only; legacy mode removed
                 try
                 {
@@ -437,12 +497,12 @@ namespace MCPForUnity.Editor
                     return; // abort this client
                 }
 
-                while (isRunning)
+                while (isRunning && !token.IsCancellationRequested)
                 {
                     try
                     {
                         // Strict framed mode only: enforced framed I/O for this connection
-                        string commandText = await ReadFrameAsUtf8Async(stream, FrameIOTimeoutMs);
+                        string commandText = await ReadFrameAsUtf8Async(stream, FrameIOTimeoutMs, token).ConfigureAwait(false);
 
                         try
                         {
@@ -454,7 +514,7 @@ namespace MCPForUnity.Editor
                         }
                         catch { }
                         string commandId = Guid.NewGuid().ToString();
-                        TaskCompletionSource<string> tcs = new();
+                        var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
 
                         // Special handling for ping command to avoid JSON parsing
                         if (commandText.Trim() == "ping")
@@ -473,7 +533,7 @@ namespace MCPForUnity.Editor
                             commandQueue[commandId] = (commandText, tcs);
                         }
 
-                        string response = await tcs.Task;
+                        string response = await tcs.Task.ConfigureAwait(false);
                         byte[] responseBytes = System.Text.Encoding.UTF8.GetBytes(response);
                         await WriteFrameAsync(stream, responseBytes);
                     }
@@ -495,6 +555,11 @@ namespace MCPForUnity.Editor
                         }
                         break;
                     }
+                }
+                }
+                finally
+                {
+                    lock (clientsLock) { activeClients.Remove(client); }
                 }
             }
         }
@@ -574,9 +639,9 @@ namespace MCPForUnity.Editor
 #endif
         }
 
-        private static async System.Threading.Tasks.Task<string> ReadFrameAsUtf8Async(NetworkStream stream, int timeoutMs)
+        private static async System.Threading.Tasks.Task<string> ReadFrameAsUtf8Async(NetworkStream stream, int timeoutMs, CancellationToken cancel)
         {
-            byte[] header = await ReadExactAsync(stream, 8, timeoutMs);
+            byte[] header = await ReadExactAsync(stream, 8, timeoutMs, cancel).ConfigureAwait(false);
             ulong payloadLen = ReadUInt64BigEndian(header);
              if (payloadLen > MaxFrameBytes)
             {
@@ -589,7 +654,7 @@ namespace MCPForUnity.Editor
                 throw new System.IO.IOException("Frame too large for buffer");
             }
             int count = (int)payloadLen;
-            byte[] payload = await ReadExactAsync(stream, count, timeoutMs);
+            byte[] payload = await ReadExactAsync(stream, count, timeoutMs, cancel).ConfigureAwait(false);
             return System.Text.Encoding.UTF8.GetString(payload);
         }
 
@@ -624,6 +689,10 @@ namespace MCPForUnity.Editor
 
         private static void ProcessCommands()
         {
+            if (!isRunning) return;
+            if (Interlocked.Exchange(ref processingCommands, 1) == 1) return; // reentrancy guard
+            try
+            {
             // Heartbeat without holding the queue lock
             double now = EditorApplication.timeSinceStartup;
             if (now >= nextHeartbeatAt)
@@ -733,6 +802,11 @@ namespace MCPForUnity.Editor
 
                 // Remove quickly under lock
                 lock (lockObj) { commandQueue.Remove(id); }
+            }
+            }
+            finally
+            {
+                Interlocked.Exchange(ref processingCommands, 0);
             }
         }
 
@@ -866,8 +940,7 @@ namespace MCPForUnity.Editor
         {
             // Stop cleanly before reload so sockets close and clients see 'reloading'
             try { Stop(); } catch { }
-            WriteHeartbeat(true, "reloading");
-            LogBreadcrumb("Reload");
+            // Avoid file I/O or heavy work here
         }
 
         private static void OnAfterAssemblyReload()
