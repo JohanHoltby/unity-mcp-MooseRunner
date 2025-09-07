@@ -183,10 +183,12 @@ def register_resource_tools(mcp: FastMCP) -> None:
         tail_lines: int | None = None,
         project_root: str | None = None,
         request: str | None = None,
+        include_text: bool = False,
     ) -> Dict[str, Any]:
         """
         Reads a resource by unity://path/... URI with optional slicing.
-        One of line window (start_line/line_count) or head_bytes can be used to limit size.
+        By default only the SHA-256 hash and byte length are returned; set
+        ``include_text`` or provide window arguments to receive text.
         """
         try:
             # Serve the canonical spec directly when requested (allow bare or with scheme)
@@ -291,25 +293,43 @@ def register_resource_tools(mcp: FastMCP) -> None:
                         start_line = max(1, hit_line - half)
                         line_count = window
 
-            # Mutually exclusive windowing options precedence:
-            # 1) head_bytes, 2) tail_lines, 3) start_line+line_count, else full text
-            if head_bytes and head_bytes > 0:
-                raw = p.read_bytes()[: head_bytes]
-                text = raw.decode("utf-8", errors="replace")
-            else:
-                text = p.read_text(encoding="utf-8")
-                if tail_lines is not None and tail_lines > 0:
-                    lines = text.splitlines()
-                    n = max(0, tail_lines)
-                    text = "\n".join(lines[-n:])
-                elif start_line is not None and line_count is not None and line_count >= 0:
-                    lines = text.splitlines()
-                    s = max(0, start_line - 1)
-                    e = min(len(lines), s + line_count)
-                    text = "\n".join(lines[s:e])
+            raw = p.read_bytes()
+            sha = hashlib.sha256(raw).hexdigest()
+            length = len(raw)
 
-            sha = hashlib.sha256(text.encode("utf-8")).hexdigest()
-            return {"success": True, "data": {"text": text, "metadata": {"sha256": sha}}}
+            want_text = (
+                bool(include_text)
+                or (head_bytes is not None and head_bytes >= 0)
+                or (tail_lines is not None and tail_lines > 0)
+                or (start_line is not None and line_count is not None)
+            )
+            if want_text:
+                text: str
+                if head_bytes is not None and head_bytes >= 0:
+                    text = raw[: head_bytes].decode("utf-8", errors="replace")
+                else:
+                    text = raw.decode("utf-8", errors="replace")
+                    if tail_lines is not None and tail_lines > 0:
+                        lines = text.splitlines()
+                        n = max(0, tail_lines)
+                        text = "\n".join(lines[-n:])
+                    elif (
+                        start_line is not None
+                        and line_count is not None
+                        and line_count >= 0
+                    ):
+                        lines = text.splitlines()
+                        s = max(0, start_line - 1)
+                        e = min(len(lines), s + line_count)
+                        text = "\n".join(lines[s:e])
+                return {
+                    "success": True,
+                    "data": {"text": text, "metadata": {"sha256": sha}},
+                }
+            return {
+                "success": True,
+                "data": {"metadata": {"sha256": sha, "lengthBytes": length}},
+            }
         except Exception as e:
             return {"success": False, "error": str(e)}
 
@@ -320,10 +340,10 @@ def register_resource_tools(mcp: FastMCP) -> None:
         ctx: Context | None = None,
         ignore_case: bool | None = True,
         project_root: str | None = None,
-        max_results: int | None = 200,
+        max_results: int | None = 1,
     ) -> Dict[str, Any]:
         """
-        Searches a file with a regex pattern and returns line numbers and excerpts.
+        Searches a file with a regex pattern and returns match positions only.
         - uri: unity://path/Assets/... or file path form supported by read_resource
         - pattern: regular expression (Python re)
         - ignore_case: case-insensitive by default
@@ -345,8 +365,17 @@ def register_resource_tools(mcp: FastMCP) -> None:
             results = []
             lines = text.splitlines()
             for i, line in enumerate(lines, start=1):
-                if rx.search(line):
-                    results.append({"line": i, "text": line})
+                m = rx.search(line)
+                if m:
+                    start_col, end_col = m.span()
+                    results.append(
+                        {
+                            "startLine": i,
+                            "startCol": start_col + 1,
+                            "endLine": i,
+                            "endCol": end_col + 1,
+                        }
+                    )
                     if max_results and len(results) >= max_results:
                         break
 
