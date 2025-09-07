@@ -29,7 +29,7 @@ def register_run_play_mode_tests_tools(mcp: FastMCP):
         If all playmode test in project should be run leave all test_method, test_class and test_assembly default.
 
         Args:
-            action: Operation ('run', 'status').
+            action: Operation ('run').
             test_assembly: The assambly specifified if an asambly, if not specified first class found in an asambly will be used. (default: "").
             test_class: The class specifified NEEDED if a class or method is to be tested (default: "").
             test_method: The method specifified. NEEDED if a method is to be tested (default: "").
