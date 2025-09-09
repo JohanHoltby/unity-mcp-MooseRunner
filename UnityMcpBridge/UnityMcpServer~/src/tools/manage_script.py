@@ -416,6 +416,11 @@ def register_manage_script_tools(mcp: FastMCP):
             "level": level,
         }
         resp = send_command_with_retry("manage_script", params)
+        if isinstance(resp, dict) and resp.get("success"):
+            diags = resp.get("data", {}).get("diagnostics", []) or []
+            warnings = sum(d.get("severity", "").lower() == "warning" for d in diags)
+            errors = sum(d.get("severity", "").lower() in ("error", "fatal") for d in diags)
+            return {"success": True, "data": {"warnings": warnings, "errors": errors}}
         return resp if isinstance(resp, dict) else {"success": False, "message": str(resp)}
 
     @mcp.tool(description=(
@@ -588,6 +593,15 @@ def register_manage_script_tools(mcp: FastMCP):
             name, directory = _split_uri(uri)
             params = {"action": "get_sha", "name": name, "path": directory}
             resp = send_command_with_retry("manage_script", params)
+            if isinstance(resp, dict) and resp.get("success"):
+                data = resp.get("data", {})
+                return {
+                    "success": True,
+                    "data": {
+                        "sha256": data.get("sha256"),
+                        "lengthBytes": data.get("lengthBytes"),
+                    },
+                }
             return resp if isinstance(resp, dict) else {"success": False, "message": str(resp)}
         except Exception as e:
             return {"success": False, "message": f"get_sha error: {e}"}
