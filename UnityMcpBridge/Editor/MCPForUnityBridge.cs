@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Concurrent;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -25,6 +26,14 @@ namespace MCPForUnity.Editor
         private static readonly object startStopLock = new();
         private static readonly object clientsLock = new();
         private static readonly System.Collections.Generic.HashSet<TcpClient> activeClients = new();
+        // Single-writer outbox for framed responses
+        private class Outbound
+        {
+            public byte[] Payload;
+            public string Tag;
+            public int? ReqId;
+        }
+        private static readonly BlockingCollection<Outbound> _outbox = new(new ConcurrentQueue<Outbound>());
         private static CancellationTokenSource cts;
         private static Task listenerTask;
         private static int processingCommands = 0;
@@ -38,11 +47,16 @@ namespace MCPForUnity.Editor
             string,
             (string commandJson, TaskCompletionSource<string> tcs)
         > commandQueue = new();
+        private static int mainThreadId;
         private static int currentUnityPort = 6400; // Dynamic port, starts with default
         private static bool isAutoConnectMode = false;
         private const ulong MaxFrameBytes = 64UL * 1024 * 1024; // 64 MiB hard cap for framed payloads
         private const int FrameIOTimeoutMs = 30000; // Per-read timeout to avoid stalled clients
         
+        // IO diagnostics
+        private static long _ioSeq = 0;
+        private static void IoInfo(string s) { McpLog.Info(s, always: false); }
+
         // Debug helpers
         private static bool IsDebugEnabled()
         {
@@ -74,10 +88,16 @@ namespace MCPForUnity.Editor
                 currentUnityPort = PortManager.GetPortWithFallback();
                 Start();
                 isAutoConnectMode = true;
+                
+                // Record telemetry for bridge startup
+                TelemetryHelper.RecordBridgeStartup();
             }
             catch (Exception ex)
             {
                 Debug.LogError($"Auto-connect failed: {ex.Message}");
+                
+                // Record telemetry for connection failure
+                TelemetryHelper.RecordBridgeConnection(false, ex.Message);
                 throw;
             }
         }
@@ -103,6 +123,37 @@ namespace MCPForUnity.Editor
 
         static MCPForUnityBridge()
         {
+            // Record the main thread ID for safe thread checks
+            try { mainThreadId = Thread.CurrentThread.ManagedThreadId; } catch { mainThreadId = 0; }
+            // Start single writer thread for framed responses
+            try
+            {
+                var writerThread = new Thread(() =>
+                {
+                    foreach (var item in _outbox.GetConsumingEnumerable())
+                    {
+                        try
+                        {
+                            long seq = Interlocked.Increment(ref _ioSeq);
+                            IoInfo($"[IO] ➜ write start seq={seq} tag={item.Tag} len={(item.Payload?.Length ?? 0)} reqId={(item.ReqId?.ToString() ?? "?")}");
+                            var sw = System.Diagnostics.Stopwatch.StartNew();
+                            // Note: We currently have a per-connection 'stream' in the client handler. For simplicity,
+                            // writes are performed inline there. This outbox provides single-writer semantics; if a shared
+                            // stream is introduced, redirect here accordingly.
+                            // No-op: actual write happens in client loop using WriteFrameAsync
+                            sw.Stop();
+                            IoInfo($"[IO] ✓ write end   tag={item.Tag} len={(item.Payload?.Length ?? 0)} reqId={(item.ReqId?.ToString() ?? "?")} durMs={sw.Elapsed.TotalMilliseconds:F1}");
+                        }
+                        catch (Exception ex)
+                        {
+                            IoInfo($"[IO] ✗ write FAIL  tag={item.Tag} reqId={(item.ReqId?.ToString() ?? "?")} {ex.GetType().Name}: {ex.Message}");
+                        }
+                    }
+                }) { IsBackground = true, Name = "MCP-Writer" };
+                writerThread.Start();
+            }
+            catch { }
+
             // Skip bridge in headless/batch environments (CI/builds) unless explicitly allowed via env
             // CI override: set UNITY_MCP_ALLOW_BATCH=1 to allow the bridge in batch mode
             if (Application.isBatchMode && string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("UNITY_MCP_ALLOW_BATCH")))
@@ -533,9 +584,69 @@ namespace MCPForUnity.Editor
                             commandQueue[commandId] = (commandText, tcs);
                         }
 
-                        string response = await tcs.Task.ConfigureAwait(false);
-                        byte[] responseBytes = System.Text.Encoding.UTF8.GetBytes(response);
-                        await WriteFrameAsync(stream, responseBytes);
+                        // Wait for the handler to produce a response, but do not block indefinitely
+                        string response;
+                        try
+                        {
+                            using var respCts = new CancellationTokenSource(FrameIOTimeoutMs);
+                            var completed = await Task.WhenAny(tcs.Task, Task.Delay(FrameIOTimeoutMs, respCts.Token)).ConfigureAwait(false);
+                            if (completed == tcs.Task)
+                            {
+                                // Got a result from the handler
+                                respCts.Cancel();
+                                response = tcs.Task.Result;
+                            }
+                            else
+                            {
+                                // Timeout: return a structured error so the client can recover
+                                var timeoutResponse = new
+                                {
+                                    status = "error",
+                                    error = $"Command processing timed out after {FrameIOTimeoutMs} ms",
+                                };
+                                response = JsonConvert.SerializeObject(timeoutResponse);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            var errorResponse = new
+                            {
+                                status = "error",
+                                error = ex.Message,
+                            };
+                            response = JsonConvert.SerializeObject(errorResponse);
+                        }
+
+                        if (IsDebugEnabled())
+                        {
+                            try { MCPForUnity.Editor.Helpers.McpLog.Info("[MCP] sending framed response", always: false); } catch { }
+                        }
+                        // Crash-proof and self-reporting writer logs (direct write to this client's stream)
+                        long seq = System.Threading.Interlocked.Increment(ref _ioSeq);
+                        byte[] responseBytes;
+                        try
+                        {
+                            responseBytes = System.Text.Encoding.UTF8.GetBytes(response);
+                            IoInfo($"[IO] ➜ write start seq={seq} tag=response len={responseBytes.Length} reqId=?");
+                        }
+                        catch (Exception ex)
+                        {
+                            IoInfo($"[IO] ✗ serialize FAIL tag=response reqId=? {ex.GetType().Name}: {ex.Message}");
+                            throw;
+                        }
+
+                        var swDirect = System.Diagnostics.Stopwatch.StartNew();
+                        try
+                        {
+                            await WriteFrameAsync(stream, responseBytes);
+                            swDirect.Stop();
+                            IoInfo($"[IO] ✓ write end   tag=response len={responseBytes.Length} reqId=? durMs={swDirect.Elapsed.TotalMilliseconds:F1}");
+                        }
+                        catch (Exception ex)
+                        {
+                            IoInfo($"[IO] ✗ write FAIL  tag=response reqId=? {ex.GetType().Name}: {ex.Message}");
+                            throw;
+                        }
                     }
                     catch (Exception ex)
                     {
@@ -810,6 +921,66 @@ namespace MCPForUnity.Editor
             }
         }
 
+        // Invoke the given function on the Unity main thread and wait up to timeoutMs for the result.
+        // Returns null on timeout or error; caller should provide a fallback error response.
+        private static object InvokeOnMainThreadWithTimeout(Func<object> func, int timeoutMs)
+        {
+            if (func == null) return null;
+            try
+            {
+                // If mainThreadId is unknown, assume we're on main thread to avoid blocking the editor.
+                if (mainThreadId == 0)
+                {
+                    try { return func(); }
+                    catch (Exception ex) { throw new InvalidOperationException($"Main thread handler error: {ex.Message}", ex); }
+                }
+                // If we are already on the main thread, execute directly to avoid deadlocks
+                try
+                {
+                    if (Thread.CurrentThread.ManagedThreadId == mainThreadId)
+                    {
+                        return func();
+                    }
+                }
+                catch { }
+
+                object result = null;
+                Exception captured = null;
+                var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                EditorApplication.delayCall += () =>
+                {
+                    try
+                    {
+                        result = func();
+                    }
+                    catch (Exception ex)
+                    {
+                        captured = ex;
+                    }
+                    finally
+                    {
+                        try { tcs.TrySetResult(true); } catch { }
+                    }
+                };
+
+                // Wait for completion with timeout (Editor thread will pump delayCall)
+                bool completed = tcs.Task.Wait(timeoutMs);
+                if (!completed)
+                {
+                    return null; // timeout
+                }
+                if (captured != null)
+                {
+                    throw new InvalidOperationException($"Main thread handler error: {captured.Message}", captured);
+                }
+                return result;
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException($"Failed to invoke on main thread: {ex.Message}", ex);
+            }
+        }
+
         // Helper method to check if a string is valid JSON
         private static bool IsValidJson(string text)
         {
@@ -874,7 +1045,9 @@ namespace MCPForUnity.Editor
                     // Maps the command type (tool name) to the corresponding handler's static HandleCommand method
                     // Assumes each handler class has a static method named 'HandleCommand' that takes JObject parameters
                     "manage_script" => ManageScript.HandleCommand(paramsObject),
-                    "manage_scene" => ManageScene.HandleCommand(paramsObject),
+                    // Run scene operations on the main thread to avoid deadlocks/hangs (with diagnostics under debug flag)
+                    "manage_scene" => HandleManageScene(paramsObject)
+                        ?? throw new TimeoutException($"manage_scene timed out after {FrameIOTimeoutMs} ms on main thread"),
                     "manage_editor" => ManageEditor.HandleCommand(paramsObject),
                     "manage_gameobject" => ManageGameObject.HandleCommand(paramsObject),
                     "manage_asset" => ManageAsset.HandleCommand(paramsObject),
@@ -910,6 +1083,23 @@ namespace MCPForUnity.Editor
                         : "No parameters", // Summarize parameters for context
                 };
                 return JsonConvert.SerializeObject(response);
+            }
+        }
+
+        private static object HandleManageScene(JObject paramsObject)
+        {
+            try
+            {
+                if (IsDebugEnabled()) Debug.Log("[MCP] manage_scene: dispatching to main thread");
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                var r = InvokeOnMainThreadWithTimeout(() => ManageScene.HandleCommand(paramsObject), FrameIOTimeoutMs);
+                sw.Stop();
+                if (IsDebugEnabled()) Debug.Log($"[MCP] manage_scene: completed in {sw.ElapsedMilliseconds} ms");
+                return r ?? Response.Error("manage_scene returned null (timeout or error)");
+            }
+            catch (Exception ex)
+            {
+                return Response.Error($"manage_scene dispatch error: {ex.Message}");
             }
         }
 

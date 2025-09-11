@@ -6,16 +6,18 @@ import time
 from mcp.server.fastmcp import FastMCP, Context
 from unity_connection import get_unity_connection, send_command_with_retry
 from config import config
+from telemetry_decorator import telemetry_tool
 
 def register_read_console_tools(mcp: FastMCP):
     """Registers the read_console tool with the MCP server."""
 
     @mcp.tool()
+    @telemetry_tool("read_console")
     def read_console(
         ctx: Context,
         action: str = None,
         types: List[str] = None,
-        count: int = None,
+        count: Any = None,
         filter_text: str = None,
         since_timestamp: str = None,
         format: str = None,
@@ -40,21 +42,34 @@ def register_read_console_tools(mcp: FastMCP):
         # Get the connection instance
         bridge = get_unity_connection()
 
-        # Set defaults if values are None (conservative but useful for CI)
+        # Set defaults if values are None
         action = action if action is not None else 'get'
-        types = types if types is not None else ['error']
-        # Normalize types if passed as a single string
-        if isinstance(types, str):
-            types = [types]
-        format = format if format is not None else 'json'
+        types = types if types is not None else ['error', 'warning', 'log']
+        format = format if format is not None else 'detailed'
         include_stacktrace = include_stacktrace if include_stacktrace is not None else True
-        # Default count to a higher value unless explicitly provided
-        count = 50 if count is None else count
 
         # Normalize action if it's a string
         if isinstance(action, str):
             action = action.lower()
         
+        # Coerce count defensively (string/float -> int)
+        def _coerce_int(value, default=None):
+            if value is None:
+                return default
+            try:
+                if isinstance(value, bool):
+                    return default
+                if isinstance(value, int):
+                    return int(value)
+                s = str(value).strip()
+                if s.lower() in ("", "none", "null"):
+                    return default
+                return int(float(s))
+            except Exception:
+                return default
+
+        count = _coerce_int(count)
+
         # Prepare parameters for the C# handler
         params_dict = {
             "action": action,
@@ -73,25 +88,15 @@ def register_read_console_tools(mcp: FastMCP):
         if 'count' not in params_dict:
              params_dict['count'] = None 
 
-        # Use centralized retry helper (tolerate legacy list payloads from some agents)
+        # Use centralized retry helper
         resp = send_command_with_retry("read_console", params_dict)
         if isinstance(resp, dict) and resp.get("success") and not include_stacktrace:
-            data = resp.get("data", {}) or {}
-            lines = data.get("lines")
-            if lines is None:
-                # Some handlers return the raw list under data
-                lines = data if isinstance(data, list) else []
-
-            def _entry(x: Any) -> Dict[str, Any]:
-                if isinstance(x, dict):
-                    return {
-                        "level": x.get("level") or x.get("type"),
-                        "message": x.get("message") or x.get("text"),
-                    }
-                if isinstance(x, (list, tuple)) and len(x) >= 2:
-                    return {"level": x[0], "message": x[1]}
-                return {"level": None, "message": str(x)}
-
-            trimmed = [_entry(l) for l in (lines or [])]
-            return {"success": True, "data": {"lines": trimmed}}
+            # Strip stacktrace fields from returned lines if present
+            try:
+                lines = resp.get("data", {}).get("lines", [])
+                for line in lines:
+                    if isinstance(line, dict) and "stacktrace" in line:
+                        line.pop("stacktrace", None)
+            except Exception:
+                pass
         return resp if isinstance(resp, dict) else {"success": False, "message": str(resp)}

@@ -7,12 +7,15 @@ from unity_connection import get_unity_connection, send_command_with_retry  # Im
 from config import config
 import time
 
+from telemetry_decorator import telemetry_tool
+
 def register_execute_menu_item_tools(mcp: FastMCP):
     """Registers the execute_menu_item tool with the MCP server."""
 
     @mcp.tool()
-    async def execute_menu_item(
-        ctx: Context,
+    @telemetry_tool("execute_menu_item")
+    def execute_menu_item(
+        ctx: Any,
         menu_path: str,
         action: str = 'execute',
         parameters: Dict[str, Any] = None,
