@@ -24,6 +24,7 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config advice.diverging false
           # ensure pushes use the PAT
           git remote set-url origin https://x-access-token:${SYNC_TOKEN}@github.com/${{ github.repository }}.git
 
@@ -31,15 +32,65 @@ jobs:
         run: |
           git remote add upstream https://github.com/CoplayDev/unity-mcp.git || true
           git fetch upstream main
+          git fetch origin
 
       - name: Merge upstream/main into main (FF if possible)
         run: |
           git checkout -B main
-          # try fast-forward first; if not possible, do a regular merge
+          # Try fast-forward; if not possible, do a regular merge.
           if ! git merge --ff-only upstream/main; then
             git merge --no-edit upstream/main
           fi
 
-      - name: Push back to fork
+      - name: Push back to fork (only if merge succeeded)
+        if: ${{ success() }}
+        run: git push origin main
+
+      # If merge failed (conflicts), show short, actionable instructions
+      - name: Manual resolution instructions
+        if: ${{ failure() }}
         run: |
-          git push origin main
+          echo "::group::Manual merge needed — follow these steps locally"
+          echo "1) Make Rider the mergetool (Windows CMD):"
+          echo "   git config --global merge.tool rider"
+          echo "   git config --global mergetool.rider.cmd \"\\\"C:/Program Files/JetBrains/JetBrains Rider 2024.3.4/bin/rider64.exe\\\" merge \\\"$LOCAL\\\" \\\"$REMOTE\\\" \\\"$BASE\\\" \\\"$MERGED\\\"\""
+          echo "   git config --global mergetool.rider.trustExitCode true"
+          echo "   git config --global mergetool.keepBackup false"
+          echo ""
+          echo "2) Update and merge locally:"
+          echo "   git fetch origin && git fetch upstream"
+          echo "   git checkout main"
+          echo "   git merge upstream/main"
+          echo ""
+          echo "3) Resolve conflicts one-by-one:"
+          echo "   git mergetool"
+          echo "   git status   # ensure no unmerged paths"
+          echo ""
+          echo "4) Commit and push:"
+          echo "   git commit -m \"Merge upstream/main into main\""
+          echo "   git push origin main"
+          echo "::endgroup::"
+
+          # Add a nice Run Summary (shown at top of the workflow page)
+          {
+            echo "# Manual merge needed";
+            echo "";
+            echo "Auto-merge hit conflicts. Resolve locally using:";
+            echo "```cmd";
+            echo "git fetch origin && git fetch upstream";
+            echo "git checkout main";
+            echo "git merge upstream/main";
+            echo "git mergetool";
+            echo "git status";
+            echo "git commit -m \"Merge upstream/main into main\"";
+            echo "git push origin main";
+            echo "```";
+            echo "";
+            echo "_Tip (Windows CMD, Rider as mergetool):_";
+            echo "```cmd";
+            echo "git config --global merge.tool rider";
+            echo "git config --global mergetool.rider.cmd \"\\\"C:/Program Files/JetBrains/JetBrains Rider 2024.3.4/bin/rider64.exe\\\" merge \\\"$LOCAL\\\" \\\"$REMOTE\\\" \\\"$BASE\\\" \\\"$MERGED\\\"\"";
+            echo "git config --global mergetool.rider.trustExitCode true";
+            echo "git config --global mergetool.keepBackup false";
+            echo "```";
+          } >> "$GITHUB_STEP_SUMMARY"
