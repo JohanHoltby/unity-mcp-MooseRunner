@@ -14,6 +14,7 @@ using UnityEngine;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Models;
 using MCPForUnity.Editor.Tools;
+using MCPForUnity.Editor.Tools.MenuItems;
 
 namespace MCPForUnity.Editor
 {
@@ -1054,7 +1055,6 @@ namespace MCPForUnity.Editor
                     "manage_shader" => ManageShader.HandleCommand(paramsObject),
                     "read_console" => ReadConsole.HandleCommand(paramsObject),
                     "execute_menu_item" => ExecuteMenuItem.HandleCommand(paramsObject),
-                    "run_play_mode_tests" => RunPlayModeTests.HandleCommand(paramsObject),
                     _ => throw new ArgumentException(
                         $"Unknown or unsupported command type: {command.type}"
                     ),

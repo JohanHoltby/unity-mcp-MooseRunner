@@ -163,20 +163,26 @@ register_all_tools(mcp)
 def asset_creation_strategy() -> str:
     """Guide for discovering and using MCP for Unity tools effectively."""
     return (
-        "Available MCP for Unity Server Tools:\\n\\n"
-        "- `manage_editor`: Controls editor state and queries info.\\n"
-        "- `execute_menu_item`: Executes Unity Editor menu items by path.\\n"
-        "- `read_console`: Reads or clears Unity console messages, with filtering options.\\n"
-        "- `manage_scene`: Manages scenes.\\n"
-        "- `manage_gameobject`: Manages GameObjects in the scene.\\n"
-        "- `manage_script`: Manages C# script files.\\n"
-        "- `manage_asset`: Manages prefabs and assets.\\n"
-        "- `manage_shader`: Manages shaders.\\n\\n"
+        "Available MCP for Unity Server Tools:\n\n"
+        "- `manage_editor`: Controls editor state and queries info.\n"
+        "- `manage_menu_item`: Executes, lists and checks for the existence of Unity Editor menu items.\n"
+        "- `read_console`: Reads or clears Unity console messages, with filtering options.\n"
+        "- `manage_scene`: Manages scenes.\n"
+        "- `manage_gameobject`: Manages GameObjects in the scene.\n"
+        "- `manage_script`: Manages C# script files.\n"
+        "- `manage_asset`: Manages prefabs and assets.\n"
+        "- `manage_shader`: Manages shaders.\n\n"
         "- `run_play_mode_tests`: Run play mode tests.\\n\\n"
-        "Tips:\\n"
-        "- Create prefabs for reusable GameObjects.\\n"
-        "- Always include a camera and main light in your scenes.\\n"
+        "Tips:\n"
+        "- Create prefabs for reusable GameObjects.\n"
+        "- Always include a camera and main light in your scenes.\n"
+        "- Unless specified otherwise, paths are relative to the project's `Assets/` folder.\n"
+        "- After creating or modifying scripts with `manage_script`, allow Unity to recompile; use `read_console` to check for compile errors.\n"
+        "- Use `manage_menu_item` for interacting with Unity systems and third party tools like a user would.\n"
+        "- List menu items before using them if you are unsure of the menu path.\n"
+        "- If a menu item seems missing, refresh the cache: use manage_menu_item with action='list' and refresh=true, or action='refresh'. Avoid refreshing every time; prefer refresh only when the menu set likely changed.\n"
     )
+
 
 # Run the server
 if __name__ == "__main__":

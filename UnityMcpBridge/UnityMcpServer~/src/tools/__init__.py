@@ -7,9 +7,8 @@ from .manage_gameobject import register_manage_gameobject_tools
 from .manage_asset import register_manage_asset_tools
 from .manage_shader import register_manage_shader_tools
 from .read_console import register_read_console_tools
-from .execute_menu_item import register_execute_menu_item_tools
+from .manage_menu_item import register_manage_menu_item_tools
 from .resource_tools import register_resource_tools
-from .run_play_mode_tests import register_run_play_mode_tests_tools
 
 logger = logging.getLogger("mcp-for-unity-server")
 
@@ -28,5 +27,6 @@ def register_all_tools(mcp):
     register_execute_menu_item_tools(mcp)
     register_run_play_mode_tests_tools(mcp)
     # Expose resource wrappers as normal tools so IDEs without resources primitive can use them
+    register_manage_menu_item_tools(mcp)
     register_resource_tools(mcp)
     logger.info("MCP for Unity Server tool registration complete.")
