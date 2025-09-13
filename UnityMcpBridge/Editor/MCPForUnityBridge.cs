@@ -1054,7 +1054,8 @@ namespace MCPForUnity.Editor
                     "manage_asset" => ManageAsset.HandleCommand(paramsObject),
                     "manage_shader" => ManageShader.HandleCommand(paramsObject),
                     "read_console" => ReadConsole.HandleCommand(paramsObject),
-                    "execute_menu_item" => ExecuteMenuItem.HandleCommand(paramsObject),
+                    "manage_menu_item" => ManageMenuItem.HandleCommand(paramsObject),
+                    "run_play_mode_tests" => RunPlayModeTests.HandleCommand(paramsObject),
                     _ => throw new ArgumentException(
                         $"Unknown or unsupported command type: {command.type}"
                     ),
