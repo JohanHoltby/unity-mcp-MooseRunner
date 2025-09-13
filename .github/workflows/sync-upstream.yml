@@ -60,15 +60,15 @@ jobs:
           echo "2) Update and merge locally:"
           echo "   git fetch origin && git fetch upstream"
           echo "   git checkout main"
-          echo "   git merge upstream/main"
+          echo "   git merge upstream/main" # this is to initlize the local merge
           echo ""
           echo "3) Resolve conflicts one-by-one:"
-          echo "   git mergetool"
+          echo "   git mergetool"           # Resolving the merge conflicts 
           echo "   git status   # ensure no unmerged paths"
           echo ""
           echo "4) Commit and push:"
-          echo "   git commit -m \"Merge upstream/main into main\""
-          echo "   git push origin main"
+          echo "   git commit -m \"Merge upstream/main into main\"" #Finaly commit the merge so all get updated in local branch
+          echo "   git push origin main" #Push to github server.
           echo "::endgroup::"
 
           # Add a nice Run Summary (shown at top of the workflow page)
