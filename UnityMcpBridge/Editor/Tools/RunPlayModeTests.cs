@@ -93,25 +93,29 @@ namespace MCPForUnity.Editor.Tools
             string test_assembly = @params["test_assembly"]?.ToString();
             string test_class = @params["test_class"]?.ToString();
             string test_method = @params["test_method"]?.ToString();
-            
+
             try
             {
-                // Determine if running all tests
-                bool rootSelected = string.IsNullOrEmpty(test_assembly) && 
-                                   string.IsNullOrEmpty(test_class) && 
-                                   string.IsNullOrEmpty(test_method);
-                
+                // Validate that at least one test parameter is specified
+                if (string.IsNullOrEmpty(test_assembly) &&
+                    string.IsNullOrEmpty(test_class) &&
+                    string.IsNullOrEmpty(test_method))
+                {
+                    return Response.Error(
+                        "At least one of test_assembly, test_class, or test_method must be specified. Running all tests is not supported via MCP."
+                    );
+                }
+
+                // Never run all tests via MCP - always specify a scope
+                bool rootSelected = false;
+
                 // Call the MooseRunnerAPI which now handles all validation and thread safety internally
                 // The API will throw exceptions for invalid parameters, which we catch and return as errors
                 MooseRunnerAPI.Instance.RunTest(rootSelected, test_assembly, test_class, test_method);
                 
                 // Build description of what's being run
                 string testDescription;
-                if (rootSelected)
-                {
-                    testDescription = "all tests";
-                }
-                else if (!string.IsNullOrEmpty(test_method))
+                if (!string.IsNullOrEmpty(test_method))
                 {
                     testDescription = $"Class: {test_class}, Method: {test_method}";
                 }

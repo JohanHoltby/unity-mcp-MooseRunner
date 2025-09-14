@@ -22,24 +22,33 @@ def register_run_play_mode_tests_tools(mcp: FastMCP):
         timeout: int = 120,
     ) -> Dict[str, Any]:
         """Run play mode tests.
-        
+
+        At least one of test_assembly, test_class, or test_method must be specified.
+        Running all tests in the project is not supported via MCP.
+
         Method requires: test_method, test_class and may set test_assembly (if multiple class exist with same name in different assemblies).
         Class require: test_class to be set and may set test_assembly.
         Assembly require: test_assembly to be set.
-        If all playmode test in project should be run leave all test_method, test_class and test_assembly default.
 
         Args:
             action: Operation ('run').
-            test_assembly: The assambly specifified if an asambly, if not specified first class found in an asambly will be used. (default: "").
-            test_class: The class specifified NEEDED if a class or method is to be tested (default: "").
-            test_method: The method specifified. NEEDED if a method is to be tested (default: "").
+            test_assembly: The assembly specified if testing an assembly, if not specified first class found in an assembly will be used. (default: "").
+            test_class: The class specified NEEDED if a class or method is to be tested (default: "").
+            test_method: The method specified. NEEDED if a method is to be tested (default: "").
             timeout: Maximum time in seconds to wait for test completion (default: 120, max: 600).
- 
+
         Returns:
             Dictionary with results ('success', 'message', 'data').
         """
         try:
             if action == "run":
+                # Validate that at least one test parameter is specified
+                if not test_assembly and not test_class and not test_method:
+                    return {
+                        "success": False,
+                        "message": "At least one of test_assembly, test_class, or test_method must be specified. Running all tests is not supported via MCP."
+                    }
+
                 # Start test execution
                 params = {
                     "action": "run",
@@ -47,7 +56,7 @@ def register_run_play_mode_tests_tools(mcp: FastMCP):
                     "test_class": test_class,
                     "test_method": test_method,
                 }
-                
+
                 # Remove None values so they don't get sent as null
                 params = {k: v for k, v in params.items() if v is not None}
                 
@@ -57,9 +66,7 @@ def register_run_play_mode_tests_tools(mcp: FastMCP):
                     return response
                 
                 # Build test description for messages
-                if not test_assembly and not test_class and not test_method:
-                    test_description = "all tests"
-                elif test_method:
+                if test_method:
                     test_description = f"Class: {test_class}, Method: {test_method}"
                 elif test_class:
                     test_description = f"Class: {test_class}"
