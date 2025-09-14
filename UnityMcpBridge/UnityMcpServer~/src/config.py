@@ -37,7 +37,7 @@ class ServerConfig:
     # Telemetry settings
     telemetry_enabled: bool = True
     # Align with telemetry.py default Cloud Run endpoint
-    telemetry_endpoint: str = "https://unity-mcp-telemetry-375728817078.us-central1.run.app/telemetry/events"
+    telemetry_endpoint: str = "https://api-prod.coplay.dev/telemetry/events"
 
 # Create a global config instance
 config = ServerConfig() 

@@ -90,7 +90,7 @@ class TelemetryConfig:
         
         # Telemetry endpoint (Cloud Run default; override via env)
         cfg_default = None if server_config is None else getattr(server_config, "telemetry_endpoint", None)
-        default_ep = cfg_default or "https://unity-mcp-telemetry-375728817078.us-central1.run.app/telemetry/events"
+        default_ep = cfg_default or "https://api-prod.coplay.dev/telemetry/events"
         self.default_endpoint = default_ep
         self.endpoint = self._validated_endpoint(
             os.environ.get("UNITY_MCP_TELEMETRY_ENDPOINT", default_ep),
