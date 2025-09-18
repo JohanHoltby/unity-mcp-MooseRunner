@@ -74,7 +74,7 @@ MCP for Unity connects your tools using two components:
       curl -LsSf https://astral.sh/uv/install.sh | sh
 
       # Windows (PowerShell)
-      winget install Astral.Sh.Uv
+      winget install --id=astral-sh.uv  -e
 
       # Docs: https://docs.astral.sh/uv/getting-started/installation/
       ```
