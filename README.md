@@ -1,5 +1,8 @@
 <img width="676" height="380" alt="MCP for Unity" src="https://github.com/user-attachments/assets/b712e41d-273c-48b2-9041-82bd17ace267" />
 
+| [English](README.md) | [简体中文](README-zh.md) |
+|----------------------|---------------------------------|
+
 #### Proudly sponsored and maintained by [Coplay](https://www.coplay.dev/?ref=unity-mcp) -- the best AI assistant for Unity. [Read the backstory here.](https://www.coplay.dev/blog/coplay-and-open-source-unity-mcp-join-forces)
 
 [![Discord](https://img.shields.io/badge/discord-join-red.svg?logo=discord&logoColor=white)](https://discord.gg/y4p8KfzrN4)
