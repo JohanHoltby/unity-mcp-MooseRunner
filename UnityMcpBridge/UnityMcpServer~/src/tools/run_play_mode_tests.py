@@ -31,7 +31,7 @@ def register_run_play_mode_tests_tools(mcp: FastMCP):
         Assembly require: test_assembly to be set.
 
         Args:
-            action: Operation ('run').
+            action: Operation ('run_test_method', 'run_test_class', 'run_test_asmdef').
             test_assembly: The assembly specified if testing an assembly, if not specified first class found in an assembly will be used. (default: "").
             test_class: The class specified NEEDED if a class or method is to be tested (default: "").
             test_method: The method specified. NEEDED if a method is to be tested (default: "").
@@ -41,7 +41,7 @@ def register_run_play_mode_tests_tools(mcp: FastMCP):
             Dictionary with results ('success', 'message', 'data').
         """
         try:
-            if action == "run":
+            if action == "run_test_method" or action == "run_test_class" or action == "run_test_asmdef":
                 # Validate that at least one test parameter is specified
                 if not test_assembly and not test_class and not test_method:
                     return {
@@ -51,7 +51,7 @@ def register_run_play_mode_tests_tools(mcp: FastMCP):
 
                 # Start test execution
                 params = {
-                    "action": "run",
+                    "action": action,
                     "test_assembly": test_assembly,
                     "test_class": test_class,
                     "test_method": test_method,

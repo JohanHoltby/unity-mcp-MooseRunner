@@ -14,17 +14,42 @@ namespace MCPForUnity.Editor.Tools
     {
 
         /// <summary>
+        /// Define the list of valid actions
+        /// </summary>
+        private static readonly List<string> ValidActions = new List<string>
+        {
+            "run_test_method",
+            "run_test_class",
+            "run_test_asmdef",
+            "status",
+        };
+        
+        /// <summary>
         /// Main handler for executing menu items or getting available ones.
         /// </summary>
         public static object HandleCommand(JObject @params)
         {
             string action = @params["action"]?.ToString().ToLower() ?? "run"; // Default action
+            
+            if (string.IsNullOrEmpty(action))
+            {
+                return Response.Error("Action parameter is required.");
+            }
+
+            // Check if the action is valid before switching
+            if (!ValidActions.Contains(action))
+            {
+                string validActionsList = string.Join(", ", ValidActions);
+                return Response.Error(
+                    $"Unknown action: '{action}'. Valid actions are: {validActionsList}"
+                );
+            }
 
             try
             {
                 switch (action)
                 {
-                    case "run":
+                    case "run_test_method" or "run_test_class" or "run_test_asmdef":
                         return RunTest(@params);
                     case "status":
                         // Get workflow status with error information
