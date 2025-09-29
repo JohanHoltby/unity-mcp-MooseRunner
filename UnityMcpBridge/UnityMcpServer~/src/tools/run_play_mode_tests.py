@@ -42,23 +42,66 @@ def register_run_play_mode_tests_tools(mcp: FastMCP):
         """
         try:
             if action == "run_test_method" or action == "run_test_class" or action == "run_test_asmdef":
-                # Validate that at least one test parameter is specified
-                if not test_assembly and not test_class and not test_method:
-                    return {
-                        "success": False,
-                        "message": "At least one of test_assembly, test_class, or test_method must be specified. Running all tests is not supported via MCP."
+                # Action-specific parameter validation
+                if action == "run_test_method":
+                    # Method requires both class and method names
+                    if not test_class or not test_method:
+                        return {
+                            "success": False,
+                            "message": "run_test_method requires both test_class and test_method parameters. test_assembly is optional."
+                        }
+
+                elif action == "run_test_class":
+                    # Class requires class name, method must not be provided
+                    if not test_class:
+                        return {
+                            "success": False,
+                            "message": "run_test_class requires test_class parameter. test_assembly is optional, test_method must not be provided."
+                        }
+                    if test_method:
+                        return {
+                            "success": False,
+                            "message": "run_test_class cannot have test_method parameter. Use run_test_method for specific method testing."
+                        }
+
+                elif action == "run_test_asmdef":
+                    # Assembly requires assembly name, class and method must not be provided
+                    if not test_assembly:
+                        return {
+                            "success": False,
+                            "message": "run_test_asmdef requires test_assembly parameter. test_class and test_method must not be provided."
+                        }
+                    if test_class or test_method:
+                        return {
+                            "success": False,
+                            "message": "run_test_asmdef cannot have test_class or test_method parameters. Use run_test_class or run_test_method for more specific testing."
+                        }
+
+                # Build params based on action type (MooseRunner hierarchy requirement)
+                if action == "run_test_method":
+                    # Only pass method parameter to Unity (class needed for lookup but cleared for Unity)
+                    params = {
+                        "action": action,
+                        "test_assembly": "",
+                        "test_class": test_class,
+                        "test_method": test_method,
                     }
-
-                # Start test execution
-                params = {
-                    "action": action,
-                    "test_assembly": test_assembly,
-                    "test_class": test_class,
-                    "test_method": test_method,
-                }
-
-                # Remove None values so they don't get sent as null
-                params = {k: v for k, v in params.items() if v is not None}
+                elif action == "run_test_class":
+                    # Only pass class parameter to Unity
+                    params = {
+                        "action": action,
+                        "test_assembly": "",
+                        "test_class": test_class,
+                        "test_method": "",
+                    }
+                elif action == "run_test_asmdef":
+                    # Only pass assembly parameter to Unity
+                    params = {
+                        "action": action,
+                        "test_assembly": test_assembly,
+                        "test_class": "",
+                        "test_method": "",
+                    }
                 
                 response = send_command_with_retry("run_play_mode_tests", params)
                 
