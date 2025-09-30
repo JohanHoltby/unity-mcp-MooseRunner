@@ -9,17 +9,17 @@ from unity_connection import send_command_with_retry
 def register_manage_gameobject_tools(mcp: FastMCP):
     """Register all GameObject management tools with the MCP server."""
 
-    @mcp.tool(name="manage_gameobject", description="Manage GameObjects. Note: for 'get_components', the `data` field contains a dictionary of component names and their serialized properties.")
+    @mcp.tool(name="manage_gameobject", description="Manage GameObjects. Note: for 'get_components', the `data` field contains a dictionary of component names and their serialized properties. For 'get_component', specify 'component_name' to retrieve only that component's serialized data.")
     @telemetry_tool("manage_gameobject")
     def manage_gameobject(
         ctx: Context,
-        action: Annotated[Literal["create", "modify", "delete", "find", "add_component", "remove_component", "set_component_property", "get_components"], "Perform CRUD operations on GameObjects and components."],
+        action: Annotated[Literal["create", "modify", "delete", "find", "add_component", "remove_component", "set_component_property", "get_components", "get_component"], "Perform CRUD operations on GameObjects and components."],
         target: Annotated[str,
                           "GameObject identifier by name or path for modify/delete/component actions"] | None = None,
-        search_method: Annotated[str,
-                                 "How to find objects ('by_name', 'by_id', 'by_path', etc.). Used with 'find' and some 'target' lookups."] | None = None,
+        search_method: Annotated[Literal["by_id", "by_name", "by_path", "by_tag", "by_layer", "by_component"],
+                                 "How to find objects. Used with 'find' and some 'target' lookups."] | None = None,
         name: Annotated[str,
-                        "GameObject name - used for both 'create' (initial name) and 'modify' (rename)"] | None = None,
+                        "GameObject name for 'create' (initial name) and 'modify' (rename) actions ONLY. For 'find' action, use 'search_term' instead."] | None = None,
         tag: Annotated[str,
                        "Tag name - used for both 'create' (initial tag) and 'modify' (change tag)"] | None = None,
         parent: Annotated[str,
@@ -53,7 +53,7 @@ def register_manage_gameobject_tools(mcp: FastMCP):
                                         - Access shared material: `{"MeshRenderer": {"sharedMaterial.color": [1, 0, 0, 1]}}`"""] | None = None,
         # --- Parameters for 'find' ---
         search_term: Annotated[str,
-                               "Search term for 'find' action"] | None = None,
+                               "Search term for 'find' action ONLY. Use this (not 'name') when searching for GameObjects."] | None = None,
         find_all: Annotated[bool,
                             "If True, finds all GameObjects matching the search term"] | None = None,
         search_in_children: Annotated[bool,
@@ -69,6 +69,26 @@ def register_manage_gameobject_tools(mcp: FastMCP):
     ) -> dict[str, Any]:
         ctx.info(f"Processing manage_gameobject: {action}")
         try:
+            # Validate parameter usage to prevent silent failures
+            if action == "find":
+                if name is not None:
+                    return {
+                        "success": False,
+                        "message": "For 'find' action, use 'search_term' parameter, not 'name'. Remove 'name' parameter. Example: search_term='Player', search_method='by_name'"
+                    }
+                if search_term is None:
+                    return {
+                        "success": False,
+                        "message": "For 'find' action, 'search_term' parameter is required. Use search_term (not 'name') to specify what to find."
+                    }
+
+            if action in ["create", "modify"]:
+                if search_term is not None:
+                    return {
+                        "success": False,
+                        "message": f"For '{action}' action, use 'name' parameter, not 'search_term'."
+                    }
+
             # Prepare parameters, removing None values
             params = {
                 "action": action,

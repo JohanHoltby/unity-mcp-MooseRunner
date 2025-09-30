@@ -155,6 +155,18 @@ namespace MCPForUnity.Editor.Tools
                             );
                         // Pass the includeNonPublicSerialized flag here
                         return GetComponentsFromTarget(getCompTarget, searchMethod, includeNonPublicSerialized);
+                    case "get_component":
+                        string getSingleCompTarget = targetToken?.ToString();
+                        if (getSingleCompTarget == null)
+                            return Response.Error(
+                                "'target' parameter required for get_component."
+                            );
+                        string componentName = @params["componentName"]?.ToString();
+                        if (string.IsNullOrEmpty(componentName))
+                            return Response.Error(
+                                "'componentName' parameter required for get_component."
+                            );
+                        return GetSingleComponentFromTarget(getSingleCompTarget, searchMethod, componentName, includeNonPublicSerialized);
                     case "add_component":
                         return AddComponentToTarget(@params, targetToken, searchMethod);
                     case "remove_component":
@@ -1004,6 +1016,70 @@ namespace MCPForUnity.Editor.Tools
             {
                 return Response.Error(
                     $"Error getting components from '{targetGo.name}': {e.Message}"
+                );
+            }
+        }
+
+        private static object GetSingleComponentFromTarget(string target, string searchMethod, string componentName, bool includeNonPublicSerialized = true)
+        {
+            GameObject targetGo = FindObjectInternal(target, searchMethod);
+            if (targetGo == null)
+            {
+                return Response.Error(
+                    $"Target GameObject ('{target}') not found using method '{searchMethod ?? "default"}'."
+                );
+            }
+
+            try
+            {
+                // Try to find the component by name
+                Component targetComponent = targetGo.GetComponent(componentName);
+
+                // If not found directly, try to find by type name (handle namespaces)
+                if (targetComponent == null)
+                {
+                    Component[] allComponents = targetGo.GetComponents<Component>();
+                    foreach (Component comp in allComponents)
+                    {
+                        if (comp != null)
+                        {
+                            string typeName = comp.GetType().Name;
+                            string fullTypeName = comp.GetType().FullName;
+
+                            if (typeName == componentName || fullTypeName == componentName)
+                            {
+                                targetComponent = comp;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (targetComponent == null)
+                {
+                    return Response.Error(
+                        $"Component '{componentName}' not found on GameObject '{targetGo.name}'."
+                    );
+                }
+
+                var componentData = Helpers.GameObjectSerializer.GetComponentData(targetComponent, includeNonPublicSerialized);
+
+                if (componentData == null)
+                {
+                    return Response.Error(
+                        $"Failed to serialize component '{componentName}' on GameObject '{targetGo.name}'."
+                    );
+                }
+
+                return Response.Success(
+                    $"Retrieved component '{componentName}' from '{targetGo.name}'.",
+                    componentData
+                );
+            }
+            catch (Exception e)
+            {
+                return Response.Error(
+                    $"Error getting component '{componentName}' from '{targetGo.name}': {e.Message}"
                 );
             }
         }
