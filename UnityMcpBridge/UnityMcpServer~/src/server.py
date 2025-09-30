@@ -170,7 +170,7 @@ def asset_creation_strategy() -> str:
         "- `manage_script`: Manages C# script files.\n"
         "- `manage_asset`: Manages prefabs and assets.\n"
         "- `manage_shader`: Manages shaders.\n\n"
-        "- `run_play_mode_tests`: Run specific play mode tests (requires at least assembly, class, or method specification).\\n\\n"
+        "- `run_play_mode_tests`: Execute Unity PlayMode tests by assembly, class, or method with timeout, state transition and compiling handling (requires at least assembly, class, or method specification).\\n\\n"
         "Tips:\n"
         "- Create prefabs for reusable GameObjects.\n"
         "- Always include a camera and main light in your scenes.\n"
