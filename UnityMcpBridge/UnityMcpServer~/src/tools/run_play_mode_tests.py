@@ -19,7 +19,7 @@ def register_run_play_mode_tests_tools(mcp: FastMCP):
         test_assembly: str,
         test_class: str,
         test_method: str,
-        timeout: int = 120,
+        timeout: int = 360,
     ) -> Dict[str, Any]:
         """Run play mode tests.
 
@@ -34,7 +34,7 @@ def register_run_play_mode_tests_tools(mcp: FastMCP):
             test_assembly: The assembly name (required for all actions).
             test_class: The class name (required for run_test_method and run_test_class).
             test_method: The method name (required for run_test_method only).
-            timeout: Maximum time in seconds to wait for test completion (default: 120, max: 600).
+            timeout: Maximum time in seconds to wait for test completion (default: 360, max: 600).
 
         Returns:
             Dictionary with results ('success', 'message', 'data').
