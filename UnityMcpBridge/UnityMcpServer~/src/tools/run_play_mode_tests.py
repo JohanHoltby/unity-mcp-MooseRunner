@@ -23,18 +23,17 @@ def register_run_play_mode_tests_tools(mcp: FastMCP):
     ) -> Dict[str, Any]:
         """Run play mode tests.
 
-        At least one of test_assembly, test_class, or test_method must be specified.
         Running all tests in the project is not supported via MCP.
 
-        Method requires: test_method, test_class and may set test_assembly (if multiple class exist with same name in different assemblies).
-        Class require: test_class to be set and may set test_assembly.
-        Assembly require: test_assembly to be set.
+        Method requires: test_assembly, test_class, and test_method.
+        Class requires: test_assembly and test_class.
+        Assembly requires: test_assembly only.
 
         Args:
             action: Operation ('run_test_method', 'run_test_class', 'run_test_asmdef').
-            test_assembly: The assembly specified if testing an assembly, if not specified first class found in an assembly will be used. (default: "").
-            test_class: The class specified NEEDED if a class or method is to be tested (default: "").
-            test_method: The method specified. NEEDED if a method is to be tested (default: "").
+            test_assembly: The assembly name (required for all actions).
+            test_class: The class name (required for run_test_method and run_test_class).
+            test_method: The method name (required for run_test_method only).
             timeout: Maximum time in seconds to wait for test completion (default: 120, max: 600).
 
         Returns:
@@ -44,19 +43,19 @@ def register_run_play_mode_tests_tools(mcp: FastMCP):
             if action == "run_test_method" or action == "run_test_class" or action == "run_test_asmdef":
                 # Action-specific parameter validation
                 if action == "run_test_method":
-                    # Method requires both class and method names
-                    if not test_class or not test_method:
+                    # Method requires assembly, class and method names
+                    if not test_assembly or not test_class or not test_method:
                         return {
                             "success": False,
-                            "message": "run_test_method requires both test_class and test_method parameters. test_assembly is optional."
+                            "message": "run_test_method requires test_assembly, test_class and test_method parameters."
                         }
 
                 elif action == "run_test_class":
-                    # Class requires class name, method must not be provided
-                    if not test_class:
+                    # Class requires assembly and class name, method must not be provided
+                    if not test_assembly or not test_class:
                         return {
                             "success": False,
-                            "message": "run_test_class requires test_class parameter. test_assembly is optional, test_method must not be provided."
+                            "message": "run_test_class requires test_assembly and test_class parameters. test_method must not be provided."
                         }
                     if test_method:
                         return {
@@ -82,7 +81,7 @@ def register_run_play_mode_tests_tools(mcp: FastMCP):
                     # Only pass method parameter to Unity (class needed for lookup but cleared for Unity)
                     params = {
                         "action": action,
-                        "test_assembly": "",
+                        "test_assembly": test_assembly,
                         "test_class": test_class,
                         "test_method": test_method,
                     }
@@ -90,7 +89,7 @@ def register_run_play_mode_tests_tools(mcp: FastMCP):
                     # Only pass class parameter to Unity
                     params = {
                         "action": action,
-                        "test_assembly": "",
+                        "test_assembly": test_assembly,
                         "test_class": test_class,
                         "test_method": "",
                     }
@@ -109,11 +108,11 @@ def register_run_play_mode_tests_tools(mcp: FastMCP):
                     return response
                 
                 # Build test description for messages
-                if test_method:
-                    test_description = f"Class: {test_class}, Method: {test_method}"
-                elif test_class:
-                    test_description = f"Class: {test_class}"
-                else:
+                if action == "run_test_method":
+                    test_description = f"Assembly: {test_assembly}, Class: {test_class}, Method: {test_method}"
+                elif action == "run_test_class":
+                    test_description = f"Assembly: {test_assembly}, Class: {test_class}"
+                else:  # run_test_asmdef
                     test_description = f"Assembly: {test_assembly}"
                     
                 # Validate and clamp timeout to reasonable bounds
