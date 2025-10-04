@@ -116,7 +116,11 @@ MCP for Unity connects your tools using two components:
 3.  Click `+` -> `Add package from git URL...`.
 4.  Enter:
     ```
+<<<<<<< HEAD
     https://github.com/JohanHoltby/unity-mcp-MooseRunner?path=/UnityMcpBridge
+=======
+    https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity
+>>>>>>> upstream/main
     ```
 5.  Click `Add`.
 6. The MCP server is installed automatically by the package on first run or via Auto-Setup. If that fails, use Manual Configuration (below).
@@ -274,7 +278,11 @@ On Windows, set `command` to the absolute shim, e.g. `C:\\Users\\YOU\\AppData\\L
 
 ## Development & Contributing 🛠️
 
-### For Developers
+### Adding Custom Tools
+
+MCP for Unity uses a Python MCP Server tied with Unity's C# scripts for tools. If you'd like to extend the functionality with your own tools, learn how to do so in **[CUSTOM_TOOLS.md](docs/CUSTOM_TOOLS.md)**.
+
+### Contributing to the Project
 
 If you're contributing to MCP for Unity or want to test core changes, we have development tools to streamline your workflow:
 
@@ -282,7 +290,7 @@ If you're contributing to MCP for Unity or want to test core changes, we have de
 - **Automatic Backup System**: Safe testing with easy rollback capabilities  
 - **Hot Reload Workflow**: Fast iteration cycle for core development
 
-📖 **See [README-DEV.md](README-DEV.md)** for complete development setup and workflow documentation.
+📖 **See [README-DEV.md](docs/README-DEV.md)** for complete development setup and workflow documentation.
 
 ### Contributing 🤝
 
@@ -303,7 +311,7 @@ Unity MCP includes **privacy-focused, anonymous telemetry** to help us improve t
 
 - **🔒 Anonymous**: Random UUIDs only, no personal data
 - **🚫 Easy opt-out**: Set `DISABLE_TELEMETRY=true` environment variable
-- **📖 Transparent**: See [TELEMETRY.md](TELEMETRY.md) for full details
+- **📖 Transparent**: See [TELEMETRY.md](docs/TELEMETRY.md) for full details
 
 Your privacy matters to us. All telemetry is optional and designed to respect your workflow.
 
@@ -355,3 +363,8 @@ MIT License. See [LICENSE](LICENSE) file.
     <img src="logo.png" alt="Coplay Logo" width="100%">
   </a>
 </p>
+
+## Disclaimer
+
+This project is a free and open-source tool for the Unity Editor, and is not affiliated with Unity Technologies.
+    https://github.com/JohanHoltby/unity-mcp-MooseRunner?path=/UnityMcpBridge
