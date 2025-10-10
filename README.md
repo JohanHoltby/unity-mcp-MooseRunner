@@ -362,7 +362,7 @@ Coplay has built 2 AI tools for Unity
 - **Unity MCP** is available freely under the MIT license.
 - **Coplay** is a premium Unity AI assistant that sits within Unity and is more than the Unity MCP.
 
-(These tools have different tech stacks. See this for more details.)
+(These tools have different tech stacks. See this blog post [comparing Coplay to Unity MCP](https://www.coplay.dev/blog/comparing-coplay-and-unity-mcp).)
 
 ## Disclaimer
 
